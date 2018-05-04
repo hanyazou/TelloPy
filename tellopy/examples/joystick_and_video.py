@@ -72,16 +72,16 @@ def handler(event, sender, data, **args):
     global prev_flight_data
     global video_player
     drone = sender
-    if event is drone.CONNECTED_EVENT:
+    if event is drone.EVENT_CONNECTED:
         print('connected')
         drone.start_video()
         drone.set_exposure(0)
         drone.set_video_encoder_rate(4)
-    elif event is drone.FLIGHT_EVENT:
+    elif event is drone.EVENT_FLIGHT_DATA:
         if prev_flight_data != str(data):
             print(data)
             prev_flight_data = str(data)
-    elif event is drone.VIDEO_FRAME_EVENT:
+    elif event is drone.EVENT_VIDEO_FRAME:
         if video_player is None:
             video_player = Popen(['mplayer', '-fps', '35', '-'], stdin=PIPE)
         try:
@@ -123,9 +123,9 @@ def main():
 
     drone = tellopy.Tello()
     drone.connect()
-    drone.subscribe(drone.CONNECTED_EVENT, handler)
-    drone.subscribe(drone.FLIGHT_EVENT, handler)
-    drone.subscribe(drone.VIDEO_FRAME_EVENT, handler)
+    drone.subscribe(drone.EVENT_CONNECTED, handler)
+    drone.subscribe(drone.EVENT_FLIGHT_DATA, handler)
+    drone.subscribe(drone.EVENT_VIDEO_FRAME, handler)
     speed = 30
     throttle = 0.0
     yaw = 0.0

@@ -8,7 +8,7 @@ class TelloError(Exception):
         self.msg = msg
 
     def __str__(self):
-        return self.msg
+        return '%s::%s' % (self.__class__.__name__, self.msg)
 
     def __repr__(self):
-        return self.msg
+        return self.__str__()

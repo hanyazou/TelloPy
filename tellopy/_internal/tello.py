@@ -3,11 +3,13 @@ import socket
 import time
 import datetime
 import sys
+import louie
 from louie import dispatcher
 
 import crc
 import logger
 import event
+import state
 import error
 from utils import *
 
@@ -176,13 +178,33 @@ class FlightData(object):
 
 
 class Tello(object):
-    CONNECTED_EVENT = event.Event('connected')
-    WIFI_EVENT = event.Event('wifi')
-    LIGHT_EVENT = event.Event('light')
-    FLIGHT_EVENT = event.Event('fligt')
-    LOG_EVENT = event.Event('log')
-    TIME_EVENT = event.Event('time')
-    VIDEO_FRAME_EVENT = event.Event('video frame')
+    EVENT_CONNECTED = event.Event('connected')
+    EVENT_WIFI = event.Event('wifi')
+    EVENT_LIGHT = event.Event('light')
+    EVENT_FLIGHT_DATA = event.Event('fligt_data')
+    EVENT_LOG = event.Event('log')
+    EVENT_TIME = event.Event('time')
+    EVENT_VIDEO_FRAME = event.Event('video frame')
+    EVENT_DISCONNECTED = event.Event('disconnected')
+    # internal events
+    __EVENT_CONN_REQ = event.Event('conn_req')
+    __EVENT_CONN_ACK = event.Event('conn_ack')
+    __EVENT_TIMEOUT = event.Event('timeout')
+    __EVENT_QUIT_REQ = event.Event('quit_req')
+
+    # for backward comaptibility
+    CONNECTED_EVENT = EVENT_CONNECTED
+    WIFI_EVENT = EVENT_WIFI
+    LIGHT_EVENT = EVENT_LIGHT
+    FLIGHT_EVENT = EVENT_FLIGHT_DATA
+    LOG_EVENT = EVENT_LOG
+    TIME_EVENT = EVENT_TIME
+    VIDEO_FRAME_EVENT = EVENT_VIDEO_FRAME
+
+    STATE_DISCONNECTED = state.State('disconnected')
+    STATE_CONNECTING = state.State('connecting')
+    STATE_CONNECTED = state.State('connected')
+    STATE_QUIT = state.State('quit')
 
     LOG_ERROR = logger.LOG_ERROR
     LOG_WARN = logger.LOG_WARN
@@ -193,7 +215,6 @@ class Tello(object):
     def __init__(self, port=9000):
         self.tello_addr = ('192.168.10.1', 8889)
         self.debug = False
-        self.cmd = None
         self.pkt_seq_num = 0x01e4
         self.port = port
         self.udpsize = 2000
@@ -202,10 +223,21 @@ class Tello(object):
         self.right_x = 0.0
         self.right_y = 0.0
         self.sock = None
-        self.running = True
+        self.state = self.STATE_DISCONNECTED
+        self.state_lock = threading.Lock()
+        self.connected = threading.Event()
+        self.video_enabled = False
         self.prev_video_data_time = None
         self.video_data_size = 0
+
+        # Create a UDP socket
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind(('', self.port))
+        self.sock.settimeout(2.0)
+
+        dispatcher.connect(self.__state_machine, louie.signal.All, sender=self)
         threading.Thread(target=self.__recv_thread).start()
+        threading.Thread(target=self.__video_thread).start()
 
     def set_loglevel(self, level):
         """
@@ -216,19 +248,31 @@ class Tello(object):
 
     def connect(self):
         """Connect is used to send the initial connection request to the drone."""
+        self.__publish(event=self.__EVENT_CONN_REQ)
+
+    def wait_for_connection(self, timeout=None):
+        """Wait_for_connection will block until the connection is established."""
+        if not self.connected.wait(timeout):
+            raise error.TelloError('timeout')
+
+    def __send_conn_req(self):
         port = 9617
         port0 = ((port/1000) % 10) << 4 | ((port/100) % 10)
         port1 = ((port/10) % 10) << 4 | ((port/1) % 10)
         buf = 'conn_req:%c%c' % (chr(port0), chr(port1))
-        log.info('connect (cmd="%s")' % str(buf))
-        self.__enqueue_packet(Packet(buf))
+        log.info('send connection request (cmd="%s%02x%02x")' % (str(buf[:-2]), port0, port1))
+        return self.send_packet(Packet(buf))
 
     def subscribe(self, signal, handler):
-        """Subscribe a event such as CONNECTED_EVENT, FLIGHT_EVENT. VIDEO_FRAME_EVENT and so on."""
+        """Subscribe a event such as EVENT_CONNECTED, EVENT_FLIGHT_DATA, EVENT_VIDEO_FRAME and so on."""
         dispatcher.connect(handler, signal, sender=self)
 
-    def __publish(self, event, **args):
-        args.update({'event': event})
+    def __publish(self, event, data=None, **args):
+        args.update({'event': event, 'data': data})
+        if 'signal' in args:
+            del args['signal']
+        if 'sender' in args:
+            del args['sender']
         log.debug('publish signal=%s, args=%s' % (event, args))
         dispatcher.send(signal=event, sender=self, **args)
 
@@ -236,28 +280,32 @@ class Tello(object):
         """Takeoff tells the drones to liftoff and start flying."""
         log.info('takemoff (cmd=0x%02x seq=0x%04x)' % (TAKEOFF_CMD, self.pkt_seq_num))
         pkt = Packet(TAKEOFF_CMD)
-        self.__enqueue_packet(pkt)
+        pkt.fixup()
+        return self.send_packet(pkt)
 
     def land(self):
         """Land tells the drone to come in for landing."""
         log.info('land (cmd=0x%02x seq=0x%04x)' % (LAND_CMD, self.pkt_seq_num))
         pkt = Packet(LAND_CMD)
         pkt.add_byte(0x00)
-        self.__enqueue_packet(pkt)
+        pkt.fixup()
+        return self.send_packet(pkt)
 
     def quit(self):
         """Quit stops the internal threads."""
         log.info('quit')
-        self.running = False
+        self.__publish(event=self.__EVENT_QUIT_REQ)
 
-    def __prepare_time_command(self):
+    def __send_time_command(self):
         log.info('send_time (cmd=0x%02x seq=0x%04x)' % (TIME_CMD, self.pkt_seq_num))
         pkt = Packet(TIME_CMD, 0x50)
         pkt.add_byte(0)
         pkt.add_time()
-        return pkt
+        pkt.fixup()
+        return self.send_packet(pkt)
 
     def __start_video(self):
+        self.video_enabled = True
         pkt = Packet(VIDEO_START_CMD, 0x60)
         pkt.fixup()
         return self.send_packet(pkt)
@@ -265,7 +313,6 @@ class Tello(object):
     def start_video(self):
         """Start_video tells the drone to send start info (SPS/PPS) for video stream."""
         log.info('start video (cmd=0x%02x seq=0x%04x)' % (VIDEO_START_CMD, self.pkt_seq_num))
-        threading.Thread(target=self.__video_thread).start()
         return self.__start_video()
 
     def set_exposure(self, level):
@@ -376,7 +423,7 @@ class Tello(object):
             log.info('set_roll(val=%4.2f)' % roll)
         self.right_x = self.__fix_range(roll)
 
-    def __prepare_stick_command(self):
+    def __send_stick_command(self):
         pkt = Packet(STICK_CMD, 0x60)
 
         axis1 = int(1024 + 660.0 * self.right_x) & 0x7ff
@@ -405,14 +452,9 @@ class Tello(object):
         pkt.add_byte(((axis4 << 11 | axis3) >> 10) & 0xff)
         pkt.add_byte(((axis4 << 11 | axis3) >> 18) & 0xff)
         pkt.add_time()
-
-        return pkt
-
-    def __enqueue_packet(self, pkt):
-        pkt.fixup(self.pkt_seq_num)
-        self.pkt_seq_num = self.pkt_seq_num + 1
-        log.debug("enqueue: %s" % byte_to_hexstring(pkt.get_buffer()))
-        self.cmd = pkt
+        pkt.fixup()
+        log.debug("stick command: %s" % byte_to_hexstring(pkt.get_buffer()))
+        return self.send_packet(pkt)
 
     def send_packet(self, pkt):
         """Send_packet is used to send a command packet to the drone."""
@@ -421,7 +463,10 @@ class Tello(object):
             self.sock.sendto(cmd, self.tello_addr)
             log.debug("send_packet: %s" % byte_to_hexstring(cmd))
         except socket.error as err:
-            log.error("send_packet: %s" % str(err))
+            if self.state == self.STATE_CONNECTED:
+                log.error("send_packet: %s" % str(err))
+            else:
+                log.info("send_packet: %s" % str(err))
             return False
 
         return True
@@ -433,14 +478,7 @@ class Tello(object):
         if str(data[0:9]) == 'conn_ack:':
             log.info('connected. (port=%2x%2x)' % (data[9], data[10]))
             log.debug('    %s' % byte_to_hexstring(data))
-            self.__publish(event=self.CONNECTED_EVENT, data=data)
-
-            # send time
-            pkt = self.__prepare_time_command()
-            pkt.fixup()
-            self.send_packet(pkt)  # ignore errors
-            log.debug("send time command: %s" % byte_to_hexstring(pkt.get_buffer()))
-
+            self.__publish(self.__EVENT_CONN_ACK, data)
             return True
 
         if data[0] != START_OF_PACKET:
@@ -453,20 +491,20 @@ class Tello(object):
         cmd = int16(data[5], data[6])
         if cmd == LOG_MSG:
             log.debug("recv: log: %s" % byte_to_hexstring(data[9:]))
-            self.__publish(event=self.LOG_EVENT, data=data[9:])
+            self.__publish(event=self.EVENT_LOG, data=data[9:])
         elif cmd == WIFI_MSG:
             log.debug("recv: wifi: %s" % byte_to_hexstring(data[9:]))
-            self.__publish(event=self.WIFI_EVENT, data=data[9:])
+            self.__publish(event=self.EVENT_WIFI, data=data[9:])
         elif cmd == LIGHT_MSG:
             log.debug("recv: light: %s" % byte_to_hexstring(data[9:]))
-            self.__publish(event=self.LIGHT_EVENT, data=data[9:])
+            self.__publish(event=self.EVENT_LIGHT, data=data[9:])
         elif cmd == FLIGHT_MSG:
             flight_data = FlightData(data[9:])
             log.debug("recv: flight data: %s" % str(flight_data))
-            self.__publish(event=self.FLIGHT_EVENT, data=flight_data)
+            self.__publish(event=self.EVENT_FLIGHT_DATA, data=flight_data)
         elif cmd == TIME_CMD:
             log.debug("recv: time data: %s" % byte_to_hexstring(data))
-            self.__publish(event=self.TIME_EVENT, data=data[7:9])
+            self.__publish(event=self.EVENT_TIME, data=data[7:9])
         elif (TAKEOFF_CMD, LAND_CMD, VIDEO_START_CMD, VIDEO_ENCODER_RATE_CMD):
             log.info("recv: ack: cmd=0x%02x seq=0x%04x %s" %
                      (int16(data[5], data[6]), int16(data[7], data[8]), byte_to_hexstring(data)))
@@ -476,36 +514,74 @@ class Tello(object):
 
         return True
 
+    def __state_machine(self, event, sender, data, **args):
+        self.state_lock.acquire()
+        cur_state = self.state
+        event_connected = False
+        event_disconnected = False
+        log.debug('event %s in state %s' % (str(event), str(self.state)))
+
+        if self.state == self.STATE_DISCONNECTED:
+            if event == self.__EVENT_CONN_REQ:
+                self.__send_conn_req()
+                self.state = self.STATE_CONNECTING
+            elif event == self.__EVENT_QUIT_REQ:
+                self.state = self.STATE_QUIT
+                event_disconnected = True
+                self.video_enabled = False
+
+        elif self.state == self.STATE_CONNECTING:
+            if event == self.__EVENT_CONN_ACK:
+                self.state = self.STATE_CONNECTED
+                event_connected = True
+                # send time
+                self.__send_time_command()
+            elif event == self.__EVENT_TIMEOUT:
+                self.__send_conn_req()
+            elif event == self.__EVENT_QUIT_REQ:
+                self.state = self.STATE_QUIT
+
+        elif self.state == self.STATE_CONNECTED:
+            if event == self.__EVENT_TIMEOUT:
+                self.__send_conn_req()
+                self.state = self.STATE_CONNECTING
+                event_disconnected = True
+                self.video_enabled = False
+            elif event == self.__EVENT_QUIT_REQ:
+                self.state = self.STATE_QUIT
+                event_disconnected = True
+                self.video_enabled = False
+
+        elif self.state == self.STATE_QUIT:
+            pass
+
+        if cur_state != self.state:
+            log.info('state transit %s -> %s' % (cur_state, self.state))
+        self.state_lock.release()
+
+        if event_connected:
+            self.__publish(event=self.EVENT_CONNECTED, **args)
+            self.connected.set()
+        if event_disconnected:
+            self.__publish(event=self.EVENT_DISCONNECTED, **args)
+            self.connected.clear()
+
     def __recv_thread(self):
-        # Create a UDP socket
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.bind(('', self.port))
-        sock.settimeout(1.0)
-        self.sock = sock
+        sock = self.sock
 
-        while self.running:
-            if self.cmd:
-                cmd = self.cmd.get_buffer()
-                log.debug("dequeue: %s" % byte_to_hexstring(cmd))
-                if self.send_packet(self.cmd):
-                    self.cmd = None
-                    log.debug("self.cmd = None")
-                else:
-                    time.sleep(3.0)
-                    continue
+        while self.state != self.STATE_QUIT:
 
-            pkt = self.__prepare_stick_command()
-            pkt.fixup()
-            self.send_packet(pkt)  # ignore errors
-            log.debug("stick command: %s" % byte_to_hexstring(pkt.get_buffer()))
+            if self.state == self.STATE_CONNECTED:
+                self.__send_stick_command()  # ignore errors
 
             try:
                 data, server = sock.recvfrom(self.udpsize)
                 log.debug("recv: %s" % byte_to_hexstring(data))
                 self.__process_packet(data)
             except socket.timeout, ex:
-                log.error('recv: timeout')
-                data = None
+                if self.state == self.STATE_CONNECTED:
+                    log.error('recv: timeout')
+                self.__publish(event=self.__EVENT_TIMEOUT)
             except Exception, ex:
                 log.error('recv: %s' % str(ex))
                 show_exception(ex)
@@ -520,12 +596,15 @@ class Tello(object):
         sock.bind(('', port))
         sock.settimeout(1.0)
 
-        while self.running:
+        while self.state != self.STATE_QUIT:
+            if not self.video_enabled:
+                time.sleep(1.0)
+                continue
             try:
                 data, server = sock.recvfrom(self.udpsize)
                 now = datetime.datetime.now()
                 log.debug("video recv: %s %d bytes" % (byte_to_hexstring(data[0:2]), len(data)))
-                self.__publish(event=self.VIDEO_FRAME_EVENT, data=data[2:])
+                self.__publish(event=self.EVENT_VIDEO_FRAME, data=data[2:])
                 if self.prev_video_data_time is None:
                     self.prev_video_data_time = now
                 self.video_data_size += len(data)

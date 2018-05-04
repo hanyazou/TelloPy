@@ -1,4 +1,4 @@
-class Event:
+class State(object):
     def __init__(self, name='annoymous'):
         self.name = name
 
@@ -13,7 +13,7 @@ class Event:
 
 
 if __name__ == '__main__':
-    ev = Event()
-    print(ev)
-    ev = Event('test event')
-    print(ev)
+    st = State()
+    print(st)
+    st = State('test state')
+    print(st)

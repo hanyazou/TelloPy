@@ -4,20 +4,17 @@ import tellopy
 
 def handler(event, sender, data, **args):
     drone = sender
-    if event is drone.CONNECTED_EVENT:
-        print('connected')
-    elif event is drone.FLIGHT_EVENT:
+    if event is drone.EVENT_FLIGHT_DATA:
         print(data)
 
 
 def test():
     drone = tellopy.Tello()
     try:
-        drone.subscribe(drone.CONNECTED_EVENT, handler)
-        drone.subscribe(drone.FLIGHT_EVENT, handler)
+        drone.subscribe(drone.EVENT_FLIGHT_DATA, handler)
 
         drone.connect()
-        sleep(2)
+        drone.wait_for_connection(60.0)
         drone.takeoff()
         sleep(5)
         drone.down(50)
