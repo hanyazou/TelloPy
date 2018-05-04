@@ -93,6 +93,14 @@ def handler(event, sender, data, **args):
         print 'event="%s" data=%s' % (event.getname(), str(data))
 
 
+def update(old, new, max_delta=0.3):
+    if abs(old - new) <= max_delta:
+        res = new
+    else:
+        res = 0.0
+    return res
+
+
 def main():
     pygame.init()
     pygame.joystick.init()
@@ -102,9 +110,9 @@ def main():
         js.init()
         js_name = js.get_name()
         print 'Joystick name: ' + js_name
-        if js_name == "Wireless Controller":
+        if js_name in ('Wireless Controller', 'Sony Computer Entertainment Wireless Controller'):
             buttons = JoystickPS4
-        elif js_name == "PLAYSTATION(R)3 Controller":
+        elif js_name == ('PLAYSTATION(R)3 Controller', 'Sony PLAYSTATION(R)3 Controller'):
             buttons = JoystickPS3
     except pygame.error:
         pass
@@ -119,6 +127,10 @@ def main():
     drone.subscribe(drone.FLIGHT_EVENT, handler)
     drone.subscribe(drone.VIDEO_FRAME_EVENT, handler)
     speed = 30
+    throttle = 0.0
+    yaw = 0.0
+    pitch = 0.0
+    roll = 0.0
 
     try:
         while 1:
@@ -129,13 +141,17 @@ def main():
                     if -buttons.BACKSLASH <= e.value and e.value <= buttons.BACKSLASH:
                         e.value = 0.0
                     if e.axis == buttons.LEFT_Y:
-                        drone.set_throttle(e.value * buttons.LEFT_Y_REVERSE)
+                        throttle = update(throttle, e.value * buttons.LEFT_Y_REVERSE)
+                        drone.set_throttle(throttle)
                     if e.axis == buttons.LEFT_X:
-                        drone.set_yaw(e.value * buttons.LEFT_X_REVERSE)
+                        yaw = update(yaw, e.value * buttons.LEFT_X_REVERSE)
+                        drone.set_yaw(yaw)
                     if e.axis == buttons.RIGHT_Y:
-                        drone.set_pitch(e.value * buttons.RIGHT_Y_REVERSE)
+                        pitch = update(pitch, e.value * buttons.RIGHT_Y_REVERSE)
+                        drone.set_pitch(pitch)
                     if e.axis == buttons.RIGHT_X:
-                        drone.set_roll(e.value * buttons.RIGHT_X_REVERSE)
+                        roll = update(roll, e.value * buttons.RIGHT_X_REVERSE)
+                        drone.set_roll(roll)
 
                 elif e.type == pygame.locals.JOYHATMOTION:
                     if e.value[0] < 0:
@@ -170,7 +186,7 @@ def main():
                     elif e.button == buttons.SQUARE:
                         drone.left(speed)
                 elif e.type == pygame.locals.JOYBUTTONUP:
-                    if e.button == buttons.L2:
+                    if e.button == buttons.R1:
                         drone.takeoff()
                     elif e.button == buttons.UP:
                         drone.up(0)
