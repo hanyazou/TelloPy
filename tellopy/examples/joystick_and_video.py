@@ -73,24 +73,24 @@ def handler(event, sender, data, **args):
     global video_player
     drone = sender
     if event is drone.CONNECTED_EVENT:
-        print 'connected'
+        print('connected')
         drone.start_video()
         drone.set_exposure(0)
         drone.set_video_encoder_rate(4)
     elif event is drone.FLIGHT_EVENT:
         if prev_flight_data != str(data):
-            print data
+            print(data)
             prev_flight_data = str(data)
     elif event is drone.VIDEO_FRAME_EVENT:
         if video_player is None:
             video_player = Popen(['mplayer', '-fps', '35', '-'], stdin=PIPE)
         try:
             video_player.stdin.write(data)
-        except IOError, err:
-            print err
+        except IOError as err:
+            print(err)
             video_player = None
     else:
-        print 'event="%s" data=%s' % (event.getname(), str(data))
+        print('event="%s" data=%s' % (event.getname(), str(data)))
 
 
 def update(old, new, max_delta=0.3):
@@ -109,7 +109,7 @@ def main():
         js = pygame.joystick.Joystick(0)
         js.init()
         js_name = js.get_name()
-        print 'Joystick name: ' + js_name
+        print('Joystick name: ' + js_name)
         if js_name in ('Wireless Controller', 'Sony Computer Entertainment Wireless Controller'):
             buttons = JoystickPS4
         elif js_name == ('PLAYSTATION(R)3 Controller', 'Sony PLAYSTATION(R)3 Controller'):
@@ -118,7 +118,7 @@ def main():
         pass
 
     if buttons is None:
-        print 'no supported joystick found'
+        print('no supported joystick found')
         return
 
     drone = tellopy.Tello()
@@ -204,10 +204,10 @@ def main():
                         drone.right(0)
                     elif e.button == buttons.SQUARE:
                         drone.left(0)
-    except KeyboardInterrupt, e:
-        print (e)
-    except Exception, e:
-        print (e)
+    except KeyboardInterrupt as e:
+        print(e)
+    except Exception as e:
+        print(e)
 
     drone.quit()
     exit(1)

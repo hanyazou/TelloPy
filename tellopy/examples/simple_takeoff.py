@@ -5,9 +5,9 @@ import tellopy
 def handler(event, sender, data, **args):
     drone = sender
     if event is drone.CONNECTED_EVENT:
-        print 'connected'
+        print('connected')
     elif event is drone.FLIGHT_EVENT:
-        print data
+        print(data)
 
 
 def test():
@@ -24,8 +24,8 @@ def test():
         sleep(5)
         drone.land()
         sleep(5)
-    except Exception, ex:
-        print ex
+    except Exception as ex:
+        print(ex)
     finally:
         drone.quit()
 

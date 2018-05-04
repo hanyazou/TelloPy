@@ -11,6 +11,6 @@ class Event:
 
 if __name__ == '__main__':
     ev = Event()
-    print ev
+    print(ev)
     ev = Event('test event')
-    print ev
+    print(ev)

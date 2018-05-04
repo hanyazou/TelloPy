@@ -9,20 +9,20 @@ def handler(event, sender, data, **args):
     global prev_flight_data
     drone = sender
     if event is drone.CONNECTED_EVENT:
-        print 'connected'
+        print('connected')
         drone.start_video()
         drone.set_exposure(0)
         drone.set_video_encoder_rate(4)
     elif event is drone.FLIGHT_EVENT:
         if prev_flight_data != str(data):
-            print data
+            print(data)
             prev_flight_data = str(data)
     elif event is drone.TIME_EVENT:
-        print 'event="%s" data=%d' % (event.getname(), data[0] + data[1] << 8)
+        print('event="%s" data=%d' % (event.getname(), data[0] + data[1] << 8))
     elif event is drone.VIDEO_FRAME_EVENT:
         pass
     else:
-        print 'event="%s" data=%s' % (event.getname(), str(data))
+        print('event="%s" data=%s' % (event.getname(), str(data)))
 
 
 def test():
@@ -48,12 +48,12 @@ def test():
         sleep(2)
         drone.land()
         sleep(5)
-    except Exception, ex:
-        print ex
+    except Exception as ex:
+        print(ex)
         show_exception(ex)
     finally:
         drone.quit()
-    print 'end.'
+    print('end.')
 
 if __name__ == '__main__':
     test()

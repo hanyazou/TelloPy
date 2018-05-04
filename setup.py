@@ -17,6 +17,7 @@ setup(
     author='Hanyazou',
     author_email='hanyazou@gmail.com',
     python_requires='>=2.7, <3',
+    # python_requires='>=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*, !=3.5.*, <4',
 
     classifiers=[
         # How mature is this project? Common values are

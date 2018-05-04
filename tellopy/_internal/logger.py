@@ -24,7 +24,7 @@ class Logger:
 
     def output(self, msg):
         self.lock.acquire()
-        print msg
+        print(msg)
         self.lock.release()
 
     def error(self, str):

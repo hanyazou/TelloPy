@@ -539,14 +539,14 @@ class Tello(object):
                     # keep sending start video command
                     self.__start_video()
 
-            except socket.timeout, ex:
+            except socket.timeout as ex:
                 log.error('video recv: timeout')
                 data = None
-            except Exception, ex:
+            except Exception as ex:
                 log.error('video recv: %s' % str(ex))
                 show_exception(ex)
 
         log.info('exit from the video thread.')
 
 if __name__ == '__main__':
-    print 'You can use test.py for testing.'
+    print('You can use test.py for testing.')
