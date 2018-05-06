@@ -11,170 +11,11 @@ import logger
 import event
 import state
 import error
+import video_stream
 from utils import *
+from protocol import *
 
 log = logger.Logger('Tello')
-
-START_OF_PACKET = 0xcc
-WIFI_MSG = 0x1a
-VIDEO_RATE_QUERY = 40
-LIGHT_MSG = 53
-FLIGHT_MSG = 0x56
-LOG_MSG = 0x1050
-
-VIDEO_ENCODER_RATE_CMD = 0x20
-VIDEO_START_CMD = 0x25
-EXPOSURE_CMD = 0x34
-TIME_CMD = 70
-STICK_CMD = 80
-TAKEOFF_CMD = 0x0054
-LAND_CMD = 0x0055
-FLIP_CMD = 0x005c
-
-
-class Packet(object):
-    def __init__(self, cmd, pkt_type=0x68):
-        if isinstance(cmd, (bytearray, str)):
-            self.buf = bytearray()
-            self.buf[:] = cmd
-        else:
-            self.buf = bytearray([
-                chr(START_OF_PACKET),
-                0, 0,
-                0,
-                chr(pkt_type),
-                chr(cmd & 0xff), chr((cmd >> 8) & 0xff),
-                0, 0])
-
-    def fixup(self, seq_num=0):
-        buf = self.get_buffer()
-        if buf[0] == START_OF_PACKET:
-            buf[1], buf[2] = le16(len(buf)+2)
-            buf[1] = (buf[1] << 3)
-            buf[3] = crc.crc8(buf[0:3])
-            buf[7], buf[8] = le16(seq_num)
-            self.add_int16(crc.crc16(buf))
-
-    def get_buffer(self):
-        return self.buf
-
-    def get_data(self):
-        return self.buf[9:len(self.buf)-2]
-
-    def add_byte(self, val):
-        self.buf.append(val & 0xff)
-
-    def add_int16(self, val):
-        self.add_byte(val)
-        self.add_byte(val >> 8)
-
-    def add_time(self, time=datetime.datetime.now()):
-        self.add_int16(time.hour)
-        self.add_int16(time.minute)
-        self.add_int16(time.second)
-        self.add_int16((time.microsecond/1000) & 0xff)
-        self.add_int16(((time.microsecond/1000) >> 8) & 0xff)
-
-    def get_time(self, buf=None):
-        if buf is None:
-            buf = self.get_data()[1:]
-        hour = int16(buf[0], buf[1])
-        min = int16(buf[2], buf[3])
-        sec = int16(buf[4], buf[5])
-        millisec = int16(buf[6], buf[8])
-        now = datetime.datetime.now()
-        return datetime.datetime(now.year, now.month, now.day, hour, min, sec, millisec)
-
-
-class FlightData(object):
-    def __init__(self, data):
-        self.battery_low = 0
-        self.battery_lower = 0
-        self.battery_percentage = 0
-        self.battery_state = 0
-        self.camera_state = 0
-        self.down_visual_state = 0
-        self.drone_battery_left = 0
-        self.drone_fly_time_left = 0
-        self.drone_hover = 0
-        self.em_open = 0
-        self.em_sky = 0
-        self.em_ground = 0
-        self.east_speed = 0
-        self.electrical_machinery_state = 0
-        self.factory_mode = 0
-        self.fly_mode = 0
-        self.fly_speed = 0
-        self.fly_time = 0
-        self.front_in = 0
-        self.front_lsc = 0
-        self.front_out = 0
-        self.gravity_state = 0
-        self.ground_speed = 0
-        self.height = 0
-        self.imu_calibration_state = 0
-        self.imu_state = 0
-        self.light_strength = 0
-        self.north_speed = 0
-        self.outage_recording = 0
-        self.power_state = 0
-        self.pressure_state = 0
-        self.smart_video_exit_mode = 0
-        self.temperature_height = 0
-        self.throw_fly_timer = 0
-        self.wifi_disturb = 0
-        self.wifi_strength = 0
-        self.wind_state = 0
-
-        if len(data) < 24:
-            return
-
-        self.height = int16(data[0], data[1])
-        self.north_speed = int16(data[2], data[3])
-        self.east_speed = int16(data[4], data[5])
-        self.ground_speed = int16(data[6], data[7])
-        self.fly_time = int16(data[8], data[9])
-
-        self.imu_state = ((data[10] >> 0) & 0x1)
-        self.pressure_state = ((data[10] >> 1) & 0x1)
-        self.down_visual_state = ((data[10] >> 2) & 0x1)
-        self.power_state = ((data[10] >> 3) & 0x1)
-        self.battery_state = ((data[10] >> 4) & 0x1)
-        self.gravity_state = ((data[10] >> 5) & 0x1)
-        self.wind_state = ((data[10] >> 7) & 0x1)
-
-        self.imu_calibration_state = data[11]
-        self.battery_percentage = data[12]
-        self.drone_battery_left = int16(data[13], data[14])
-        self.drone_fly_time_left = int16(data[15], data[16])
-
-        self.em_sky = ((data[17] >> 0) & 0x1)
-        self.em_ground = ((data[17] >> 1) & 0x1)
-        self.em_open = ((data[17] >> 2) & 0x1)
-        self.drone_hover = ((data[17] >> 3) & 0x1)
-        self.outage_recording = ((data[17] >> 4) & 0x1)
-        self.battery_low = ((data[17] >> 5) & 0x1)
-        self.battery_lower = ((data[17] >> 6) & 0x1)
-        self.factory_mode = ((data[17] >> 7) & 0x1)
-
-        self.fly_mode = data[18]
-        self.throw_fly_timer = data[19]
-        self.camera_state = data[20]
-        self.electrical_machinery_state = data[21]
-
-        self.front_in = ((data[22] >> 0) & 0x1)
-        self.front_out = ((data[22] >> 1) & 0x1)
-        self.front_lsc = ((data[22] >> 2) & 0x1)
-
-        self.temperature_height = ((data[23] >> 0) & 0x1)
-
-    def __str__(self):
-        return (
-            ("height=%2d" % self.height) +
-            (", fly_mode=0x%02x" % self.fly_mode) +
-            (", battery_percentage=%2d" % self.battery_percentage) +
-            (", drone_battery_left=0x%04x" % self.drone_battery_left) +
-            "")
 
 
 class Tello(object):
@@ -224,11 +65,15 @@ class Tello(object):
         self.right_y = 0.0
         self.sock = None
         self.state = self.STATE_DISCONNECTED
-        self.state_lock = threading.Lock()
+        self.lock = threading.Lock()
         self.connected = threading.Event()
         self.video_enabled = False
         self.prev_video_data_time = None
         self.video_data_size = 0
+        self.log = log
+        self.exposure = 0
+        self.video_encoder_rate = 4
+        self.video_stream = None
 
         # Create a UDP socket
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -245,6 +90,27 @@ class Tello(object):
         LOG_ERROR, LOG_WARN, LOG_INFO, LOG_DEBUG and LOG_ALL.
         """
         log.set_level(level)
+
+    def get_video_stream(self):
+        """
+        Get_video_stream is used to prepare buffer object which receive video data from the drone.
+        """
+        newly_created = False
+        self.lock.acquire()
+        log.info('get video stream')
+        try:
+            if self.video_stream is None:
+                self.video_stream = video_stream.VideoStream(self)
+                newly_created = True
+            res = self.video_stream
+        finally:
+            self.lock.release()
+        if newly_created:
+            self.__send_exposure()
+            self.__send_video_encoder_rate()
+            self.start_video()
+
+        return res
 
     def connect(self):
         """Connect is used to send the initial connection request to the drone."""
@@ -304,8 +170,7 @@ class Tello(object):
         pkt.fixup()
         return self.send_packet(pkt)
 
-    def __start_video(self):
-        self.video_enabled = True
+    def __send_start_video(self):
         pkt = Packet(VIDEO_START_CMD, 0x60)
         pkt.fixup()
         return self.send_packet(pkt)
@@ -313,15 +178,22 @@ class Tello(object):
     def start_video(self):
         """Start_video tells the drone to send start info (SPS/PPS) for video stream."""
         log.info('start video (cmd=0x%02x seq=0x%04x)' % (VIDEO_START_CMD, self.pkt_seq_num))
-        return self.__start_video()
+        self.video_enabled = True
+        self.__send_exposure()
+        self.__send_video_encoder_rate()
+        return self.__send_start_video()
 
     def set_exposure(self, level):
         """Set_exposure sets the drone camera exposure level. Valid levels are 0, 1, and 2."""
         if level < 0 or 2 < level:
             raise error.TelloError('Invalid exposure level')
         log.info('set exposure (cmd=0x%02x seq=0x%04x)' % (EXPOSURE_CMD, self.pkt_seq_num))
+        self.exposure = level
+        return self.__send_exposure()
+
+    def __send_exposure(self):
         pkt = Packet(EXPOSURE_CMD, 0x48)
-        pkt.add_byte(level)
+        pkt.add_byte(self.exposure)
         pkt.fixup()
         return self.send_packet(pkt)
 
@@ -329,8 +201,12 @@ class Tello(object):
         """Set_video_encoder_rate sets the drone video encoder rate."""
         log.info('set video encoder rate (cmd=0x%02x seq=%04x)' %
                  (VIDEO_ENCODER_RATE_CMD, self.pkt_seq_num))
+        self.video_encoder_rate = rate
+        return self.__send_video_encoder_rate()
+
+    def __send_video_encoder_rate(self):
         pkt = Packet(VIDEO_ENCODER_RATE_CMD, 0x68)
-        pkt.add_byte(rate)
+        pkt.add_byte(self.video_encoder_rate)
         pkt.fixup()
         return self.send_packet(pkt)
 
@@ -478,7 +354,12 @@ class Tello(object):
         if str(data[0:9]) == 'conn_ack:':
             log.info('connected. (port=%2x%2x)' % (data[9], data[10]))
             log.debug('    %s' % byte_to_hexstring(data))
+            if self.video_enabled:
+                self.__send_exposure()
+                self.__send_video_encoder_rate()
+                self.__send_start_video()
             self.__publish(self.__EVENT_CONN_ACK, data)
+
             return True
 
         if data[0] != START_OF_PACKET:
@@ -515,7 +396,7 @@ class Tello(object):
         return True
 
     def __state_machine(self, event, sender, data, **args):
-        self.state_lock.acquire()
+        self.lock.acquire()
         cur_state = self.state
         event_connected = False
         event_disconnected = False
@@ -557,7 +438,7 @@ class Tello(object):
 
         if cur_state != self.state:
             log.info('state transit %s -> %s' % (cur_state, self.state))
-        self.state_lock.release()
+        self.lock.release()
 
         if event_connected:
             self.__publish(event=self.EVENT_CONNECTED, **args)
@@ -594,7 +475,7 @@ class Tello(object):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         port = 6038
         sock.bind(('', port))
-        sock.settimeout(1.0)
+        sock.settimeout(5.0)
 
         while self.state != self.STATE_QUIT:
             if not self.video_enabled:
@@ -616,7 +497,7 @@ class Tello(object):
                     self.prev_video_data_time = now
 
                     # keep sending start video command
-                    self.__start_video()
+                    self.__send_start_video()
 
             except socket.timeout as ex:
                 log.error('video recv: timeout')

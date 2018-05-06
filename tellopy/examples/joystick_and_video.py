@@ -72,12 +72,7 @@ def handler(event, sender, data, **args):
     global prev_flight_data
     global video_player
     drone = sender
-    if event is drone.EVENT_CONNECTED:
-        print('connected')
-        drone.start_video()
-        drone.set_exposure(0)
-        drone.set_video_encoder_rate(4)
-    elif event is drone.EVENT_FLIGHT_DATA:
+    if event is drone.EVENT_FLIGHT_DATA:
         if prev_flight_data != str(data):
             print(data)
             prev_flight_data = str(data)
@@ -123,7 +118,7 @@ def main():
 
     drone = tellopy.Tello()
     drone.connect()
-    drone.subscribe(drone.EVENT_CONNECTED, handler)
+    drone.start_video()
     drone.subscribe(drone.EVENT_FLIGHT_DATA, handler)
     drone.subscribe(drone.EVENT_VIDEO_FRAME, handler)
     speed = 30
