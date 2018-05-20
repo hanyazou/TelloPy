@@ -15,11 +15,37 @@ import pygame.display
 import pygame.key
 import pygame.locals
 import pygame.font
+import os
+import datetime
 from subprocess import Popen, PIPE
 
 prev_flight_data = None
 video_player = None
+video_recorder = None
 font = None
+
+def record_video(drone, speed):
+    global video_recorder
+    if video_recorder or speed == 0:
+        return
+
+    filename = '%s/Pictures/tello-%s.mp4' % (os.getenv('HOME'), datetime.datetime.now().isoformat())
+    video_recorder = Popen([
+        'mencoder', '-', '-vc', 'x264', '-fps', '30', '-ovc', 'copy',
+        '-of', 'lavf', '-lavfopts', 'format=mp4', '-ffourcc', 'avc1',
+        # '-really-quiet',
+        '-o', filename,
+    ], stdin=PIPE)
+    status_print('Recording video to %s' % filename)
+    video_file = open(filename, 'w')
+
+def stop_recording(drone, speed):
+    global video_recorder
+    if video_recorder is None or speed == 0:
+        return
+    video_recorder.stdin.close()
+    video_recorder = None
+    status_print('Video recording ends.')
 
 controls = {
     'w': 'forward',
@@ -37,16 +63,19 @@ controls = {
     'down': 'down',
     'tab': lambda drone: drone.takeoff(),
     'backspace': lambda drone: drone.land(),
+    'r': record_video,
+    't': stop_recording,
     # not implemented yet
     #'enter': lambda drone: drone.photo()
-    #'r': lambda drone: drone.record_video()
-    #'t': lambda drone: drone.finish_recording()
 }
 
 def status_print(text):
     global font
-    surface = font.render(text, True, (255, 255, 255), (0,0,0))
-    pygame.display.get_surface().fill(bg)
+    global video_recorder
+    bg = (0,0,0)
+    if video_recorder:
+        bg = (128, 0, 0)
+    surface = font.render(text, True, (255, 255, 255), bg)
     pygame.display.get_surface().blit(surface, (16,16))
     pygame.display.flip()
     print(text)
@@ -54,6 +83,7 @@ def status_print(text):
 def handler(event, sender, data, **args):
     global prev_flight_data
     global video_player
+    global video_recorder
     drone = sender
     if event is drone.EVENT_FLIGHT_DATA:
         if prev_flight_data != str(data):
@@ -64,6 +94,8 @@ def handler(event, sender, data, **args):
             video_player = Popen(['mplayer', '-fps', '35', '-'], stdin=PIPE)
         try:
             video_player.stdin.write(data)
+            if video_recorder:
+                video_recorder.stdin.write(data)
         except IOError as err:
             status_print(str(err))
             video_player = None
@@ -131,6 +163,7 @@ def main():
         print str(e)
     finally:
         print 'Shutting down connection to drone...'
+        stop_recording(drone, 0)
         drone.quit()
         exit(1)
 
