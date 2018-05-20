@@ -57,12 +57,13 @@ controls = {
     'right shift': 'down',
     'q': 'counter_clockwise',
     'e': 'clockwise',
-    'left': 'counter_clockwise',
-    'right': 'clockwise',
-    'up': 'up',
-    'down': 'down',
-    'tab': lambda drone: drone.takeoff(),
-    'backspace': lambda drone: drone.land(),
+    # arrow keys for fast turns and altitude adjustments
+    'left': lambda drone, speed: drone.counter_clockwise(speed*2),
+    'right': lambda drone, speed: drone.clockwise(speed*2),
+    'up': lambda drone, speed: drone.up(speed*2),
+    'down': lambda drone, speed: drone.down(speed*2),
+    'tab': lambda drone, speed: drone.takeoff(),
+    'backspace': lambda drone, speed: drone.land(),
     'r': record_video,
     't': stop_recording,
     # not implemented yet
@@ -148,7 +149,7 @@ def main():
                         if type(key_handler) == str:
                             getattr(drone, key_handler)(speed)
                         else:
-                            key_handler(drone)
+                            key_handler(drone, speed)
 
                 elif e.type == pygame.locals.KEYUP:
                     print '-',pygame.key.name(e.key)
@@ -158,7 +159,7 @@ def main():
                         if type(key_handler) == str:
                             getattr(drone, key_handler)(0)
                         else:
-                            key_handler(drone)
+                            key_handler(drone, 0)
     except e:
         print str(e)
     finally:
