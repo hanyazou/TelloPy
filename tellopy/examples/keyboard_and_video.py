@@ -14,10 +14,12 @@ import pygame
 import pygame.display
 import pygame.key
 import pygame.locals
+import pygame.font
 from subprocess import Popen, PIPE
 
 prev_flight_data = None
 video_player = None
+font = None
 
 controls = {
     'w': 'forward',
@@ -41,13 +43,21 @@ controls = {
     #'t': lambda drone: drone.finish_recording()
 }
 
+def status_print(text):
+    global font
+    surface = font.render(text, True, (255, 255, 255), (0,0,0))
+    pygame.display.get_surface().fill(bg)
+    pygame.display.get_surface().blit(surface, (16,16))
+    pygame.display.flip()
+    print(text)
+
 def handler(event, sender, data, **args):
     global prev_flight_data
     global video_player
     drone = sender
     if event is drone.EVENT_FLIGHT_DATA:
         if prev_flight_data != str(data):
-            print(data)
+            status_print(str(data))
             prev_flight_data = str(data)
     elif event is drone.EVENT_VIDEO_FRAME:
         if video_player is None:
@@ -55,10 +65,10 @@ def handler(event, sender, data, **args):
         try:
             video_player.stdin.write(data)
         except IOError as err:
-            print(err)
+            status_print(str(err))
             video_player = None
     else:
-        print('event="%s" data=%s' % (event.getname(), str(data)))
+        status_print('event="%s" data=%s' % (event.getname(), str(data)))
 
 
 def update(old, new, max_delta=0.3):
@@ -72,8 +82,13 @@ def update(old, new, max_delta=0.3):
 def main():
     pygame.init()
     pygame.display.init()
-    pygame.display.set_mode((128,128))
+    pygame.display.set_mode((1024, 64))
+    pygame.font.init()
 
+    global font
+    font = pygame.font.Font(None, 32)
+
+    status_print('Connecting to drone...')
     drone = tellopy.Tello()
     drone.connect()
     drone.start_video()
@@ -112,6 +127,8 @@ def main():
                             getattr(drone, key_handler)(0)
                         else:
                             key_handler(drone)
+    except e:
+        print str(e)
     finally:
         print 'Shutting down connection to drone...'
         drone.quit()
