@@ -92,7 +92,7 @@ def handler(event, sender, data, **args):
             prev_flight_data = str(data)
     elif event is drone.EVENT_VIDEO_FRAME:
         if video_player is None:
-            video_player = Popen(['mplayer', '-fps', '35', '-'], stdin=PIPE)
+            video_player = Popen(['mplayer', '-fps', '30', '-really-quiet', '-'], stdin=PIPE)
         try:
             video_player.stdin.write(data)
             if video_recorder:
