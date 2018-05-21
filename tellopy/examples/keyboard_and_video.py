@@ -25,11 +25,19 @@ video_recorder = None
 font = None
 wid = None
 
-def record_video(drone, speed):
+def toggle_recording(drone, speed):
     global video_recorder
-    if video_recorder or speed == 0:
+    if speed == 0:
         return
 
+    if video_recorder:
+        # already recording, so stop
+        video_recorder.stdin.close()
+        status_print('Video saved to %s' % video_recorder.video_filename)
+        video_recorder = None
+        return
+
+    # start a new recording
     filename = '%s/Pictures/tello-%s.mp4' % (os.getenv('HOME'), datetime.datetime.now().isoformat())
     video_recorder = Popen([
         'mencoder', '-', '-vc', 'x264', '-fps', '30', '-ovc', 'copy',
@@ -37,31 +45,19 @@ def record_video(drone, speed):
         # '-really-quiet',
         '-o', filename,
     ], stdin=PIPE)
+    video_recorder.video_filename = filename
     status_print('Recording video to %s' % filename)
     video_file = open(filename, 'w')
-
-def stop_recording(drone, speed):
-    global video_recorder
-    if video_recorder is None or speed == 0:
-        return
-    video_recorder.stdin.close()
-    video_recorder = None
-    status_print('Video recording ends.')
 
 def palm_land(drone, speed):
     if speed == 0:
         return
     drone.palm_land()
 
-def zoom(drone, speed):
+def toggle_zoom(drone, speed):
     if speed == 0:
         return
-    drone.set_video_mode(zoom=True)
-
-def unzoom(drone, speed):
-    if speed == 0:
-        return
-    drone.set_video_mode(zoom=False)
+    drone.set_video_mode(not drone.zoom)
 
 controls = {
     'w': 'forward',
@@ -81,10 +77,8 @@ controls = {
     'tab': lambda drone, speed: drone.takeoff(),
     'backspace': lambda drone, speed: drone.land(),
     'p': palm_land,
-    'r': record_video,
-    't': stop_recording,
-    'z': zoom,
-    'x': unzoom,
+    'r': toggle_recording,
+    'z': toggle_zoom,
     # not implemented yet
     #'enter': lambda drone: drone.photo()
 }
@@ -187,7 +181,8 @@ def main():
         print str(e)
     finally:
         print 'Shutting down connection to drone...'
-        stop_recording(drone, 0)
+        if video_recorder:
+            toggle_recording(drone, 1)
         drone.quit()
         exit(1)
 

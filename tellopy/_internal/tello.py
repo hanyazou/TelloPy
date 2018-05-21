@@ -76,6 +76,9 @@ class Tello(object):
         self.video_encoder_rate = 4
         self.video_stream = None
 
+        # video zoom state
+        self.zoom = False
+
         # Create a UDP socket
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind(('', self.port))
@@ -200,6 +203,7 @@ class Tello(object):
         4:3 has a wider field of view (both vertically and horizontally), 16:9 is crisper."""
         log.info('set video mode zoom=%s (cmd=0x%02x seq=0x%04x)' % (
             zoom, VIDEO_START_CMD, self.pkt_seq_num))
+        self.zoom = zoom
         return self.__send_video_mode(int(zoom))
 
     def start_video(self):
