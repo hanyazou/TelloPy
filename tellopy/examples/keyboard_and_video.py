@@ -1,10 +1,20 @@
 """
 tellopy sample using keyboard and video player
 
- - you must install mplayer to replay the video
- - WASD + shift/space to translate the drone
- - QE or arrows to yaw
- - tab to lift off, backspace to land
+Requires mplayer to record/save video.
+
+
+Controls:
+- tab to lift off
+- WASD to move the drone
+- space/shift to ascend/descent slowly
+- Q/E to yaw slowly
+- arrow keys to ascend, descend, or yaw quickly
+- backspace to land, or P to palm-land
+- R to start recording video, R again to stop recording
+  (video will be saved to a timestamped file in ~/Pictures/)
+- Z to toggle camera zoom state
+  (zoomed-in widescreen or high FOV 4:3)
 """
 
 import time
