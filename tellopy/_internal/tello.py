@@ -145,6 +145,11 @@ class Tello(object):
 
     def takeoff(self):
         """Takeoff tells the drones to liftoff and start flying."""
+        log.info('set altitude limit 30m')
+        pkt = Packet(SET_ALT_LIMIT_CMD)
+        pkt.add_byte(0x1e)  # 30m
+        pkt.add_byte(0x00)
+        self.send_packet(pkt)
         log.info('takeoff (cmd=0x%02x seq=0x%04x)' % (TAKEOFF_CMD, self.pkt_seq_num))
         pkt = Packet(TAKEOFF_CMD)
         pkt.fixup()
@@ -279,7 +284,7 @@ class Tello(object):
         pkt.add_byte(FlipFront)
         pkt.fixup()
         return self.send_packet(pkt)
-		
+
     def flip_back(self):
         """flip_back tells the drone to perform a backwards flip"""
         log.info('flip_back (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
@@ -287,7 +292,7 @@ class Tello(object):
         pkt.add_byte(FlipBack)
         pkt.fixup()
         return self.send_packet(pkt)
-		
+
     def flip_right(self):
         """flip_right tells the drone to perform a right flip"""
         log.info('flip_right (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
