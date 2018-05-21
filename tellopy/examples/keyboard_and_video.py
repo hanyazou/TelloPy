@@ -23,6 +23,7 @@ prev_flight_data = None
 video_player = None
 video_recorder = None
 font = None
+wid = None
 
 def record_video(drone, speed):
     global video_recorder
@@ -77,14 +78,9 @@ controls = {
 }
 
 def status_print(text):
-    global font
-    global video_recorder
-    bg = (0,0,0)
     if video_recorder:
-        bg = (128, 0, 0)
-    surface = font.render(text, True, (255, 255, 255), bg)
-    pygame.display.get_surface().blit(surface, (16,16))
-    pygame.display.flip()
+        text = text + ' [REC]'
+    pygame.display.set_caption(text)
     print(text)
 
 def handler(event, sender, data, **args):
@@ -93,12 +89,18 @@ def handler(event, sender, data, **args):
     global video_recorder
     drone = sender
     if event is drone.EVENT_FLIGHT_DATA:
-        if prev_flight_data != str(data):
-            status_print(str(data))
-            prev_flight_data = str(data)
+        text = str(data)
+        if data.battery_percentage <= 10:
+            text = '!! LOW BAT !!' + text
+        if prev_flight_data != text:
+            status_print(text)
+            prev_flight_data = text
     elif event is drone.EVENT_VIDEO_FRAME:
         if video_player is None:
-            video_player = Popen(['mplayer', '-fps', '30', '-really-quiet', '-'], stdin=PIPE)
+            video_player = Popen([
+                'mplayer', '-fps', '30', '-really-quiet', '-wid', str(wid),
+                '-'],
+                stdin=PIPE)
         try:
             video_player.stdin.write(data)
             if video_recorder:
@@ -121,13 +123,16 @@ def update(old, new, max_delta=0.3):
 def main():
     pygame.init()
     pygame.display.init()
-    pygame.display.set_mode((1024, 64))
+    pygame.display.set_mode((1280, 720))
     pygame.font.init()
 
     global font
     font = pygame.font.Font(None, 32)
 
-    status_print('Connecting to drone...')
+    global wid
+    wid = pygame.display.get_wm_info()['window']
+    print wid
+
     drone = tellopy.Tello()
     drone.connect()
     drone.start_video()
