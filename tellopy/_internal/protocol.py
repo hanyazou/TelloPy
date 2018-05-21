@@ -20,6 +20,7 @@ TAKEOFF_CMD = 0x0054
 LAND_CMD = 0x0055
 FLIP_CMD = 0x005c
 PALM_LAND_CMD = 0x005e
+SET_ALT_LIMIT_CMD = 0x0058
 
 #Flip commands taken from Go version of code
 #FlipFront flips forward.
