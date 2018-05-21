@@ -189,11 +189,18 @@ class Tello(object):
         pkt.fixup()
         return self.send_packet(pkt)
 
-    def __send_video_mode(self):
+    def __send_video_mode(self, mode):
         pkt = Packet(VIDEO_MODE_CMD)
-        pkt.add_byte(1)
+        pkt.add_byte(mode)
         pkt.fixup()
         return self.send_packet(pkt)
+
+    def set_video_mode(self, zoom=False):
+        """Tell the drone whether to capture 960x720 4:3 video, or 1280x720 16:9 zoomed video.
+        4:3 has a wider field of view (both vertically and horizontally), 16:9 is crisper."""
+        log.info('set video mode zoom=%s (cmd=0x%02x seq=0x%04x)' % (
+            zoom, VIDEO_START_CMD, self.pkt_seq_num))
+        return self.__send_video_mode(int(zoom))
 
     def start_video(self):
         """Start_video tells the drone to send start info (SPS/PPS) for video stream."""
@@ -201,7 +208,6 @@ class Tello(object):
         self.video_enabled = True
         self.__send_exposure()
         self.__send_video_encoder_rate()
-        self.__send_video_mode()
         return self.__send_start_video()
 
     def set_exposure(self, level):
