@@ -184,12 +184,19 @@ class Tello(object):
         pkt.fixup()
         return self.send_packet(pkt)
 
+    def __send_video_mode(self):
+        pkt = Packet(VIDEO_MODE_CMD)
+        pkt.add_byte(1)
+        pkt.fixup()
+        return self.send_packet(pkt)
+
     def start_video(self):
         """Start_video tells the drone to send start info (SPS/PPS) for video stream."""
         log.info('start video (cmd=0x%02x seq=0x%04x)' % (VIDEO_START_CMD, self.pkt_seq_num))
         self.video_enabled = True
         self.__send_exposure()
         self.__send_video_encoder_rate()
+        self.__send_video_mode()
         return self.__send_start_video()
 
     def set_exposure(self, level):
