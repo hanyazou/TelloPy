@@ -53,6 +53,16 @@ def palm_land(drone, speed):
         return
     drone.palm_land()
 
+def zoom(drone, speed):
+    if speed == 0:
+        return
+    drone.set_video_mode(zoom=True)
+
+def unzoom(drone, speed):
+    if speed == 0:
+        return
+    drone.set_video_mode(zoom=False)
+
 controls = {
     'w': 'forward',
     's': 'backward',
@@ -73,6 +83,8 @@ controls = {
     'p': palm_land,
     'r': record_video,
     't': stop_recording,
+    'z': zoom,
+    'x': unzoom,
     # not implemented yet
     #'enter': lambda drone: drone.photo()
 }
