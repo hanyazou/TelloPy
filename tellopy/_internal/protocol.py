@@ -182,8 +182,11 @@ class FlightData(object):
 
     def __str__(self):
         return (
-            ("height=%2d" % self.height) +
-            (", fly_mode=0x%02x" % self.fly_mode) +
-            (", battery_percentage=%2d" % self.battery_percentage) +
-            (", drone_battery_left=0x%04x" % self.drone_battery_left) +
+            ("ALT: %2d" % self.height) +
+            (" | SPD: %2d" % self.ground_speed) +
+            (" | BAT: %2d" % self.battery_percentage) +
+            (" | WIFI: %2d" % self.wifi_strength) +
+            (" | CAM: %2d" % self.camera_state) +
+            (" | MODE: %2d" % self.fly_mode) +
+            # (", drone_battery_left=0x%04x" % self.drone_battery_left) +
             "")
