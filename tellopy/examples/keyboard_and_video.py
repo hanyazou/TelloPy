@@ -47,6 +47,11 @@ def stop_recording(drone, speed):
     video_recorder = None
     status_print('Video recording ends.')
 
+def palm_land(drone, speed):
+    if speed == 0:
+        return
+    drone.palm_land()
+
 controls = {
     'w': 'forward',
     's': 'backward',
@@ -64,6 +69,7 @@ controls = {
     'down': lambda drone, speed: drone.down(speed*2),
     'tab': lambda drone, speed: drone.takeoff(),
     'backspace': lambda drone, speed: drone.land(),
+    'p': palm_land,
     'r': record_video,
     't': stop_recording,
     # not implemented yet
