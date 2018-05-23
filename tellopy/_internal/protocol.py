@@ -21,6 +21,10 @@ LAND_CMD = 0x0055
 FLIP_CMD = 0x005c
 PALM_LAND_CMD = 0x005e
 SET_ALT_LIMIT_CMD = 0x0058
+TAKE_PICTURE_COMMAND = 48
+TELLO_CMD_FILE_SIZE                 = 98     # pt50
+TELLO_CMD_FILE_DATA                 = 99     # pt50
+TELLO_CMD_FILE_COMPLETE             = 100    # pt48
 
 #Flip commands taken from Go version of code
 #FlipFront flips forward.
@@ -41,7 +45,7 @@ FlipBackRight = 6
 FlipForwardRight = 7
 
 class Packet(object):
-    def __init__(self, cmd, pkt_type=0x68):
+    def __init__(self, cmd, pkt_type=0x68, payload=b''):
         if isinstance(cmd, str):
             self.buf = bytearray()
             for c in cmd:
@@ -57,6 +61,7 @@ class Packet(object):
                 pkt_type,
                 (cmd & 0xff), ((cmd >> 8) & 0xff),
                 0, 0])
+            self.buf.extend(payload)
 
     def fixup(self, seq_num=0):
         buf = self.get_buffer()
