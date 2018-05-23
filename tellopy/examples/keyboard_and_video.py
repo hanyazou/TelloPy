@@ -11,8 +11,9 @@ Controls:
 - Q/E to yaw slowly
 - arrow keys to ascend, descend, or yaw quickly
 - backspace to land, or P to palm-land
+- enter to take a picture
 - R to start recording video, R again to stop recording
-  (video will be saved to a timestamped file in ~/Pictures/)
+  (video and photos will be saved to a timestamped file in ~/Pictures/)
 - Z to toggle camera zoom state
   (zoomed-in widescreen or high FOV 4:3)
 """
@@ -59,6 +60,11 @@ def toggle_recording(drone, speed):
     status_print('Recording video to %s' % filename)
     video_file = open(filename, 'w')
 
+def take_picture(drone, speed):
+    if speed == 0:
+        return
+    drone.take_picture()
+
 def palm_land(drone, speed):
     if speed == 0:
         return
@@ -89,8 +95,8 @@ controls = {
     'p': palm_land,
     'r': toggle_recording,
     'z': toggle_zoom,
-    # not implemented yet
-    #'enter': lambda drone: drone.photo()
+    'enter': take_picture,
+    'return': take_picture,
 }
 
 def status_print(text):
