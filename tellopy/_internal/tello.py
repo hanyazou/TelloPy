@@ -495,7 +495,7 @@ class Tello(object):
         elif cmd == TIME_CMD:
             log.debug("recv: time data: %s" % byte_to_hexstring(data))
             self.__publish(event=self.EVENT_TIME, data=data[7:9])
-        elif (TAKEOFF_CMD, LAND_CMD, VIDEO_START_CMD, VIDEO_ENCODER_RATE_CMD, PALM_LAND_CMD):
+        elif cmd in (TAKEOFF_CMD, LAND_CMD, VIDEO_START_CMD, VIDEO_ENCODER_RATE_CMD, PALM_LAND_CMD):
             log.info("recv: ack: cmd=0x%02x seq=0x%04x %s" %
                      (int16(data[5], data[6]), int16(data[7], data[8]), byte_to_hexstring(data)))
         elif cmd == TELLO_CMD_FILE_SIZE:
@@ -513,7 +513,7 @@ class Tello(object):
             # for earlier.
             self.recv_file_data(pkt.get_data())
         else:
-            log.info('unknown packet: %s' % byte_to_hexstring(data))
+            log.info('unknown packet: %04x %s' % (cmd, byte_to_hexstring(data)))
             return False
 
         return True
