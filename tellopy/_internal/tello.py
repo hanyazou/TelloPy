@@ -71,6 +71,7 @@ class Tello(object):
         self.video_enabled = False
         self.prev_video_data_time = None
         self.video_data_size = 0
+        self.video_data_loss = 0
         self.log = log
         self.exposure = 0
         self.video_encoder_rate = 4
@@ -478,6 +479,7 @@ class Tello(object):
         sock.bind(('', port))
         sock.settimeout(5.0)
 
+        prev_header = None
         while self.state != self.STATE_QUIT:
             if not self.video_enabled:
                 time.sleep(1.0)
@@ -486,17 +488,34 @@ class Tello(object):
                 data, server = sock.recvfrom(self.udpsize)
                 now = datetime.datetime.now()
                 log.debug("video recv: %s %d bytes" % (byte_to_hexstring(data[0:2]), len(data)))
+
+                # check video data loss
+                header = ord(data[0])
+                if (prev_header is not None and
+                    header != prev_header and
+                    header != ((prev_header + 1) & 0xff)):
+                    loss = header - prev_header
+                    if loss < 0:
+                        loss = loss + 256
+                    self.video_data_loss += loss
+                prev_header = header
+
+                # deliver video frame to subscribers
                 self.__publish(event=self.EVENT_VIDEO_FRAME, data=data[2:])
                 self.__publish(event=self.EVENT_VIDEO_DATA, data=data)
+
+                # show video frame statistics
                 if self.prev_video_data_time is None:
                     self.prev_video_data_time = now
                 self.video_data_size += len(data)
                 dur = (now - self.prev_video_data_time).total_seconds()
                 if 2.0 < dur:
-                    log.info('video data %d bytes %5.1fKB/sec' %
-                             (self.video_data_size, self.video_data_size / dur / 1024))
+                    log.info(('video data %d bytes %5.1fKB/sec' %
+                              (self.video_data_size, self.video_data_size / dur / 1024)) +
+                             ((' loss=%d' % self.video_data_loss) if self.video_data_loss != 0 else ''))
                     self.video_data_size = 0
                     self.prev_video_data_time = now
+                    self.video_data_loss = 0
 
                     # keep sending start video command
                     self.__send_start_video()
