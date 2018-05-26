@@ -26,6 +26,7 @@ class Tello(object):
     EVENT_LOG = event.Event('log')
     EVENT_TIME = event.Event('time')
     EVENT_VIDEO_FRAME = event.Event('video frame')
+    EVENT_VIDEO_DATA = event.Event('video data')
     EVENT_DISCONNECTED = event.Event('disconnected')
     # internal events
     __EVENT_CONN_REQ = event.Event('conn_req')
@@ -486,6 +487,7 @@ class Tello(object):
                 now = datetime.datetime.now()
                 log.debug("video recv: %s %d bytes" % (byte_to_hexstring(data[0:2]), len(data)))
                 self.__publish(event=self.EVENT_VIDEO_FRAME, data=data[2:])
+                self.__publish(event=self.EVENT_VIDEO_DATA, data=data)
                 if self.prev_video_data_time is None:
                     self.prev_video_data_time = now
                 self.video_data_size += len(data)

@@ -10,7 +10,7 @@ class VideoStream(object):
         self.closed = False
         drone.subscribe(drone.EVENT_CONNECTED, self.__handle_event)
         drone.subscribe(drone.EVENT_DISCONNECTED, self.__handle_event)
-        drone.subscribe(drone.EVENT_VIDEO_FRAME, self.__handle_event)
+        drone.subscribe(drone.EVENT_VIDEO_DATA, self.__handle_event)
 
     def read(self, size):
         self.cond.acquire()
@@ -41,9 +41,9 @@ class VideoStream(object):
             self.closed = True
             self.cond.notifyAll()
             self.cond.release()
-        elif event is self.drone.EVENT_VIDEO_FRAME:
-            self.log.debug('%s.handle_event(VIDEO_FRAME, size=%d)' % (self.__class__, len(data)))
+        elif event is self.drone.EVENT_VIDEO_DATA:
+            self.log.debug('%s.handle_event(VIDEO_DATA, size=%d)' % (self.__class__, len(data)))
             self.cond.acquire()
-            self.queue.append(data)
+            self.queue.append(data[2:])
             self.cond.notifyAll()
             self.cond.release()
