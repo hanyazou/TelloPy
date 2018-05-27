@@ -1,3 +1,5 @@
+import sys
+import traceback
 import tellopy
 import av
 import cv2.cv2 as cv2  # for avoidance of pylint error
@@ -21,6 +23,8 @@ def main():
             cv2.waitKey(1)
 
     except Exception as ex:
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
         print(ex)
     finally:
         drone.quit()
