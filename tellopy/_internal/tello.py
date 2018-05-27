@@ -478,8 +478,13 @@ class Tello(object):
         port = 6038
         sock.bind(('', port))
         sock.settimeout(5.0)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 512 * 1024)
+        log.info('video receive buffer size = %d' %
+                 sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF))
 
         prev_header = None
+        prev_ts = None
+        history = []
         while self.state != self.STATE_QUIT:
             if not self.video_enabled:
                 time.sleep(1.0)
@@ -488,6 +493,7 @@ class Tello(object):
                 data, server = sock.recvfrom(self.udpsize)
                 now = datetime.datetime.now()
                 log.debug("video recv: %s %d bytes" % (byte_to_hexstring(data[0:2]), len(data)))
+                show_history = False
 
                 # check video data loss
                 header = ord(data[0])
@@ -498,7 +504,35 @@ class Tello(object):
                     if loss < 0:
                         loss = loss + 256
                     self.video_data_loss += loss
+                    #
+                    # enable this line to see packet history
+                    # show_history = True
+                    #
                 prev_header = header
+
+                # check video data interval
+                if prev_ts is not None and 0.1 < (now - prev_ts).total_seconds():
+                    log.info('video recv: %d bytes %02x%02x +%03d' %
+                             (len(data), ord(data[0]), ord(data[1]),
+                              (now - prev_ts).total_seconds() * 1000))
+                prev_ts = now
+
+                # save video data history
+                history.append([now, len(data), ord(data[0])*256 + ord(data[1])])
+                if 100 < len(history):
+                    history = history[1:]
+
+                # show video data history
+                if show_history:
+                    prev_ts = history[0][0]
+                    for i in range(1, len(history)):
+                        [ ts, sz, sn ] = history[i]
+                        print('    %02d:%02d:%02d.%03d %4d bytes %04x +%03d%s' %
+                              (ts.hour, ts.minute, ts.second, ts.microsecond/1000,
+                               sz, sn, (ts - prev_ts).total_seconds()*1000,
+                               (' *' if i == len(history) - 1 else '')))
+                        prev_ts = ts
+                    history = history[-1:]
 
                 # deliver video frame to subscribers
                 self.__publish(event=self.EVENT_VIDEO_FRAME, data=data[2:])
