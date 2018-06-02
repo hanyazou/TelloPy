@@ -1,0 +1,44 @@
+
+How to release tellopy to PyPi
+
+# merge development branch
+git checkout master
+git merge develop-0.4.0
+git diff
+-    version='0.4.0.dev0',
++    version='0.4.0',
+git add setup.py 
+git commit -m "Update version number"
+
+# build package
+rm -rf dist/ build/
+python setup.py bdist_wheel
+
+# install package
+pip2 uninstall tellopy
+pip2 install ./dist/tellopy-*.whl 
+pip3 uninstall tellopy
+pip3 install ./dist/tellopy-*.whl 
+
+# test package
+python2 -m tellopy.examples.simple_takeoff
+python2 -m tellopy.examples.video_effect
+python2 -m tellopy.examples.joystick_and_video
+python3 -m tellopy.examples.simple_takeoff
+python3 -m tellopy.examples.video_effect
+python3 -m tellopy.examples.joystick_and_video
+
+# upload package to PyPi
+twine upload dist/tellopy-0.4.0-py2.py3-none-any.whl 
+
+# create new development branch
+push
+git checkout -b develop-0.5.0
+git diff | cat
+-    version='0.4.0',
++    version='0.5.0.dev0',
+git add setup.py 
+git commit -m "Create new develop-0.5.0 branch and update version number"
+git push -u origin develop-0.5.0
+
+[EOF]
