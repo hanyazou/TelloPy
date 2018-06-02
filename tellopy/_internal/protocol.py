@@ -22,16 +22,20 @@ FLIP_CMD = 0x005c
 
 class Packet(object):
     def __init__(self, cmd, pkt_type=0x68):
-        if isinstance(cmd, (bytearray, str)):
+        if isinstance(cmd, str):
+            self.buf = bytearray()
+            for c in cmd:
+                self.buf.append(ord(c))
+        elif isinstance(cmd, (bytearray, bytes)):
             self.buf = bytearray()
             self.buf[:] = cmd
         else:
             self.buf = bytearray([
-                chr(START_OF_PACKET),
+                START_OF_PACKET,
                 0, 0,
                 0,
-                chr(pkt_type),
-                chr(cmd & 0xff), chr((cmd >> 8) & 0xff),
+                pkt_type,
+                (cmd & 0xff), ((cmd >> 8) & 0xff),
                 0, 0])
 
     def fixup(self, seq_num=0):

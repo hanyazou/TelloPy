@@ -2,6 +2,12 @@ import sys
 import traceback
 
 
+def byte(c):
+    if isinstance(c, str):
+        return ord(c)
+    return c
+
+
 def le16(val):
     return (val & 0xff), ((val >> 8) & 0xff)
 

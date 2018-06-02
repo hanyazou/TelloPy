@@ -124,8 +124,8 @@ class Tello(object):
 
     def __send_conn_req(self):
         port = 9617
-        port0 = ((port/1000) % 10) << 4 | ((port/100) % 10)
-        port1 = ((port/10) % 10) << 4 | ((port/1) % 10)
+        port0 = (int(port/1000) % 10) << 4 | (int(port/100) % 10)
+        port1 = (int(port/10) % 10) << 4 | (int(port/1) % 10)
         buf = 'conn_req:%c%c' % (chr(port0), chr(port1))
         log.info('send connection request (cmd="%s%02x%02x")' % (str(buf[:-2]), port0, port1))
         return self.send_packet(Packet(buf))
@@ -495,7 +495,7 @@ class Tello(object):
                 show_history = False
 
                 # check video data loss
-                header = ord(data[0])
+                header = byte(data[0])
                 if (prev_header is not None and
                     header != prev_header and
                     header != ((prev_header + 1) & 0xff)):
@@ -512,12 +512,12 @@ class Tello(object):
                 # check video data interval
                 if prev_ts is not None and 0.1 < (now - prev_ts).total_seconds():
                     log.info('video recv: %d bytes %02x%02x +%03d' %
-                             (len(data), ord(data[0]), ord(data[1]),
+                             (len(data), byte(data[0]), byte(data[1]),
                               (now - prev_ts).total_seconds() * 1000))
                 prev_ts = now
 
                 # save video data history
-                history.append([now, len(data), ord(data[0])*256 + ord(data[1])])
+                history.append([now, len(data), byte(data[0])*256 + byte(data[1])])
                 if 100 < len(history):
                     history = history[1:]
 
