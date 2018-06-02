@@ -1,4 +1,4 @@
-import event
+from . import event
 
 
 class signal(object):

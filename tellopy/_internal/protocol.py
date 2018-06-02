@@ -1,7 +1,7 @@
 import datetime
 
-import crc
-from utils import *
+from . import crc
+from . utils import *
 
 START_OF_PACKET = 0xcc
 WIFI_MSG = 0x1a

@@ -3,16 +3,16 @@ import socket
 import time
 import datetime
 import sys
-import dispatcher
 
-import crc
-import logger
-import event
-import state
-import error
-import video_stream
-from utils import *
-from protocol import *
+from . import crc
+from . import logger
+from . import event
+from . import state
+from . import error
+from . import video_stream
+from . utils import *
+from . protocol import *
+from . import dispatcher
 
 log = logger.Logger('Tello')
 
@@ -464,7 +464,7 @@ class Tello(object):
                 if self.state == self.STATE_CONNECTED:
                     log.error('recv: timeout')
                 self.__publish(event=self.__EVENT_TIMEOUT)
-            except Exception, ex:
+            except Exception as ex:
                 log.error('recv: %s' % str(ex))
                 show_exception(ex)
 
