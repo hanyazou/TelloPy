@@ -352,7 +352,7 @@ class Tello(object):
         if isinstance(data, str):
             data = bytearray([x for x in data])
 
-        if str(data[0:9]) == 'conn_ack:':
+        if str(data[0:9]) == 'conn_ack:' or data[0:9] == b'conn_ack:':
             log.info('connected. (port=%2x%2x)' % (data[9], data[10]))
             log.debug('    %s' % byte_to_hexstring(data))
             if self.video_enabled:

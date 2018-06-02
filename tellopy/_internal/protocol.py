@@ -64,8 +64,8 @@ class Packet(object):
         self.add_int16(time.hour)
         self.add_int16(time.minute)
         self.add_int16(time.second)
-        self.add_int16((time.microsecond/1000) & 0xff)
-        self.add_int16(((time.microsecond/1000) >> 8) & 0xff)
+        self.add_int16(int(time.microsecond/1000) & 0xff)
+        self.add_int16((int(time.microsecond/1000) >> 8) & 0xff)
 
     def get_time(self, buf=None):
         if buf is None:
