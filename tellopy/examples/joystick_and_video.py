@@ -107,7 +107,7 @@ def main():
         print('Joystick name: ' + js_name)
         if js_name in ('Wireless Controller', 'Sony Computer Entertainment Wireless Controller'):
             buttons = JoystickPS4
-        elif js_name == ('PLAYSTATION(R)3 Controller', 'Sony PLAYSTATION(R)3 Controller'):
+        elif js_name in ('PLAYSTATION(R)3 Controller', 'Sony PLAYSTATION(R)3 Controller'):
             buttons = JoystickPS3
     except pygame.error:
         pass
