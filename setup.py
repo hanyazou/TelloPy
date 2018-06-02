@@ -48,7 +48,6 @@ setup(
     packages=find_packages(exclude=['contrib', 'docs', 'tests', 'files']),
 
     install_requires=[
-        'louie'
     ],
 
     project_urls={

@@ -3,8 +3,7 @@ import socket
 import time
 import datetime
 import sys
-import louie
-from louie import dispatcher
+import dispatcher
 
 import crc
 import logger
@@ -82,7 +81,7 @@ class Tello(object):
         self.sock.bind(('', self.port))
         self.sock.settimeout(2.0)
 
-        dispatcher.connect(self.__state_machine, louie.signal.All, sender=self)
+        dispatcher.connect(self.__state_machine, dispatcher.signal.All)
         threading.Thread(target=self.__recv_thread).start()
         threading.Thread(target=self.__video_thread).start()
 
@@ -133,16 +132,16 @@ class Tello(object):
 
     def subscribe(self, signal, handler):
         """Subscribe a event such as EVENT_CONNECTED, EVENT_FLIGHT_DATA, EVENT_VIDEO_FRAME and so on."""
-        dispatcher.connect(handler, signal, sender=self)
+        dispatcher.connect(handler, signal)
 
     def __publish(self, event, data=None, **args):
-        args.update({'event': event, 'data': data})
+        args.update({'data': data})
         if 'signal' in args:
             del args['signal']
         if 'sender' in args:
             del args['sender']
         log.debug('publish signal=%s, args=%s' % (event, args))
-        dispatcher.send(signal=event, sender=self, **args)
+        dispatcher.send(event, sender=self, **args)
 
     def takeoff(self):
         """Takeoff tells the drones to liftoff and start flying."""
@@ -461,7 +460,7 @@ class Tello(object):
                 data, server = sock.recvfrom(self.udpsize)
                 log.debug("recv: %s" % byte_to_hexstring(data))
                 self.__process_packet(data)
-            except socket.timeout, ex:
+            except socket.timeout as ex:
                 if self.state == self.STATE_CONNECTED:
                     log.error('recv: timeout')
                 self.__publish(event=self.__EVENT_TIMEOUT)
