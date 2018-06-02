@@ -17,7 +17,7 @@ class VideoStream(object):
         try:
             if len(self.queue) == 0 and not self.closed:
                 self.cond.wait(5.0)
-            data = ''
+            data = bytes()
             while 0 < len(self.queue) and len(data) + len(self.queue[0]) < size:
                 data = data + self.queue[0]
                 del self.queue[0]

@@ -15,12 +15,11 @@ def main():
 
         container = av.open(drone.get_video_stream())
         while True:
-            frame = container.decode(video=0).next()
-
-            image = cv2.cvtColor(numpy.array(frame.to_image()), cv2.COLOR_RGB2BGR)
-            cv2.imshow('Original', image)
-            cv2.imshow('Canny', cv2.Canny(image, 100, 200))
-            cv2.waitKey(1)
+            for frame in container.decode(video=0):
+                image = cv2.cvtColor(numpy.array(frame.to_image()), cv2.COLOR_RGB2BGR)
+                cv2.imshow('Original', image)
+                cv2.imshow('Canny', cv2.Canny(image, 100, 200))
+                cv2.waitKey(1)
 
     except Exception as ex:
         exc_type, exc_value, exc_traceback = sys.exc_info()
