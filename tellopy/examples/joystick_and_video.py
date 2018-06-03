@@ -1,8 +1,10 @@
 """
 tellopy sample using joystick and video palyer
 
- - you can use PS3/PS4 joystick to controll DJI Tello with tellopy module
+ - you can use PS3/PS4/XONE joystick to controll DJI Tello with tellopy module
  - you must install mplayer to replay the video
+ - Xbox One Controllers were only tested on Mac OS with the 360Controller Driver.
+    get it here -> https://github.com/360Controller/360Controller'''
 """
 
 import time
@@ -153,7 +155,6 @@ def main():
             buttons = JoystickPS3
         elif js_name == 'Xbox One Wired Controller':
             buttons = JoystickXONE
-            pass
     except pygame.error:
         pass
 
@@ -178,7 +179,7 @@ def main():
             time.sleep(0.01)
             for e in pygame.event.get():
                 if e.type == pygame.locals.JOYAXISMOTION:
-                    # ignore small DEADZONE
+                    # ignore small input values (Deadzone)
                     if -buttons.DEADZONE <= e.value and e.value <= buttons.DEADZONE:
                         e.value = 0.0
                     if e.axis == buttons.LEFT_Y:
