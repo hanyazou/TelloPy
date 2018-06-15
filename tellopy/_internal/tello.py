@@ -257,6 +257,70 @@ class Tello(object):
         log.info('counter_clockwise(val=%d)' % val)
         self.left_x = val / 100.0 * -1
 
+    def flip_forward(self):
+        """flip_forward tells the drone to perform a forwards flip"""
+        log.info('flip_forward (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
+        pkt = Packet(FLIP_CMD, 0x70)
+        pkt.add_byte(FlipFront)
+        pkt.fixup()
+        return self.send_packet(pkt)
+		
+    def flip_back(self):
+        """flip_back tells the drone to perform a backwards flip"""
+        log.info('flip_back (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
+        pkt = Packet(FLIP_CMD, 0x70)
+        pkt.add_byte(FlipBack)
+        pkt.fixup()
+        return self.send_packet(pkt)
+		
+    def flip_right(self):
+        """flip_right tells the drone to perform a right flip"""
+        log.info('flip_right (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
+        pkt = Packet(FLIP_CMD, 0x70)
+        pkt.add_byte(FlipRight)
+        pkt.fixup()
+        return self.send_packet(pkt)
+
+    def flip_left(self):
+        """flip_left tells the drone to perform a left flip"""
+        log.info('flip_left (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
+        pkt = Packet(FLIP_CMD, 0x70)
+        pkt.add_byte(FlipLeft)
+        pkt.fixup()
+        return self.send_packet(pkt)
+
+    def flip_forwardleft(self):
+        """flip_forwardleft tells the drone to perform a forwards left flip"""
+        log.info('flip_forwardleft (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
+        pkt = Packet(FLIP_CMD, 0x70)
+        pkt.add_byte(FlipForwardLeft)
+        pkt.fixup()
+        return self.send_packet(pkt)
+
+    def flip_backleft(self):
+        """flip_backleft tells the drone to perform a backwards left flip"""
+        log.info('flip_backleft (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
+        pkt = Packet(FLIP_CMD, 0x70)
+        pkt.add_byte(FlipBackLeft)
+        pkt.fixup()
+        return self.send_packet(pkt)
+
+    def flip_forwardright(self):
+        """flip_forwardright tells the drone to perform a forwards right flip"""
+        log.info('flip_forwardright (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
+        pkt = Packet(FLIP_CMD, 0x70)
+        pkt.add_byte(FlipForwardRight)
+        pkt.fixup()
+        return self.send_packet(pkt)
+
+    def flip_backright(self):
+        """flip_backleft tells the drone to perform a backwards right flip"""
+        log.info('flip_backright (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
+        pkt = Packet(FLIP_CMD, 0x70)
+        pkt.add_byte(FlipBackLeft)
+        pkt.fixup()
+        return self.send_packet(pkt)
+
     def __fix_range(self, val, min=-1.0, max=1.0):
         if val < min:
             val = min

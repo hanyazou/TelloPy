@@ -19,6 +19,23 @@ TAKEOFF_CMD = 0x0054
 LAND_CMD = 0x0055
 FLIP_CMD = 0x005c
 
+#Flip commands taken from Go version of code
+#FlipFront flips forward.
+FlipFront = 0
+#FlipLeft flips left.
+FlipLeft = 1
+#FlipBack flips backwards.
+FlipBack = 2
+#FlipRight flips to the right.
+FlipRight = 3
+#FlipForwardLeft flips forwards and to the left.
+FlipForwardLeft = 4
+#FlipBackLeft flips backwards and to the left.
+FlipBackLeft = 5
+#FlipBackRight flips backwards and to the right.
+FlipBackRight = 6
+#FlipForwardRight flips forwards and to the right.
+FlipForwardRight = 7
 
 class Packet(object):
     def __init__(self, cmd, pkt_type=0x68):
