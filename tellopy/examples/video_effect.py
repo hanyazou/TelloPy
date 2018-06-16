@@ -14,8 +14,13 @@ def main():
         drone.wait_for_connection(60.0)
 
         container = av.open(drone.get_video_stream())
+        frame_count = 0
         while True:
             for frame in container.decode(video=0):
+                frame_count = frame_count + 1
+                # skip first 300 frames
+                if frame_count < 300:
+                    continue
                 image = cv2.cvtColor(numpy.array(frame.to_image()), cv2.COLOR_RGB2BGR)
                 cv2.imshow('Original', image)
                 cv2.imshow('Canny', cv2.Canny(image, 100, 200))
