@@ -175,7 +175,7 @@ def main():
 
     try:
         while 1:
-            # loop with pygame.event.get() is too mush tight w/o some sleep
+            # loop with pygame.event.get() is too much tight w/o some sleep
             time.sleep(0.01)
             for e in pygame.event.get():
                 if e.type == pygame.locals.JOYAXISMOTION:
