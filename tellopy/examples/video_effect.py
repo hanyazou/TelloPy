@@ -4,6 +4,7 @@ import tellopy
 import av
 import cv2.cv2 as cv2  # for avoidance of pylint error
 import numpy
+import time
 
 
 def main():
@@ -14,17 +15,19 @@ def main():
         drone.wait_for_connection(60.0)
 
         container = av.open(drone.get_video_stream())
-        frame_count = 0
+        # skip first 300 frames
+        frame_skip = 300
         while True:
             for frame in container.decode(video=0):
-                frame_count = frame_count + 1
-                # skip first 300 frames
-                if frame_count < 300:
+                if 0 < frame_skip:
+                    frame_skip = frame_skip - 1
                     continue
+                start_time = time.time()
                 image = cv2.cvtColor(numpy.array(frame.to_image()), cv2.COLOR_RGB2BGR)
                 cv2.imshow('Original', image)
                 cv2.imshow('Canny', cv2.Canny(image, 100, 200))
                 cv2.waitKey(1)
+                frame_skip = int((time.time() - start_time)/frame.time_base)
 
     except Exception as ex:
         exc_type, exc_value, exc_traceback = sys.exc_info()
