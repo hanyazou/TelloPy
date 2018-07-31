@@ -77,6 +77,7 @@ class Tello(object):
         self.exposure = 0
         self.video_encoder_rate = 4
         self.video_stream = None
+        self.wifi_strength = 0
 
         # video zoom state
         self.zoom = False
@@ -484,12 +485,14 @@ class Tello(object):
             self.__publish(event=self.EVENT_LOG, data=data[9:])
         elif cmd == WIFI_MSG:
             log.debug("recv: wifi: %s" % byte_to_hexstring(data[9:]))
+            self.wifi_strength = data[9]
             self.__publish(event=self.EVENT_WIFI, data=data[9:])
         elif cmd == LIGHT_MSG:
             log.debug("recv: light: %s" % byte_to_hexstring(data[9:]))
             self.__publish(event=self.EVENT_LIGHT, data=data[9:])
         elif cmd == FLIGHT_MSG:
             flight_data = FlightData(data[9:])
+            flight_data.wifi_strength = self.wifi_strength
             log.debug("recv: flight data: %s" % str(flight_data))
             self.__publish(event=self.EVENT_FLIGHT_DATA, data=flight_data)
         elif cmd == TIME_CMD:
