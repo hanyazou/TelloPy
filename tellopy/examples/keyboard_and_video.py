@@ -153,7 +153,6 @@ def main():
 
     global wid
     wid = pygame.display.get_wm_info()['window']
-    print wid
 
     drone = tellopy.Tello()
     drone.connect()
@@ -172,7 +171,7 @@ def main():
             for e in pygame.event.get():
                 # WASD for movement
                 if e.type == pygame.locals.KEYDOWN:
-                    print '+',pygame.key.name(e.key)
+                    print('+' + pygame.key.name(e.key))
                     keyname = pygame.key.name(e.key)
                     if keyname == 'escape':
                         drone.quit()
@@ -185,7 +184,7 @@ def main():
                             key_handler(drone, speed)
 
                 elif e.type == pygame.locals.KEYUP:
-                    print '-',pygame.key.name(e.key)
+                    print('-' + pygame.key.name(e.key))
                     keyname = pygame.key.name(e.key)
                     if keyname in controls:
                         key_handler = controls[keyname]
@@ -194,9 +193,9 @@ def main():
                         else:
                             key_handler(drone, 0)
     except e:
-        print str(e)
+        print(str(e))
     finally:
-        print 'Shutting down connection to drone...'
+        print('Shutting down connection to drone...')
         if video_recorder:
             toggle_recording(drone, 1)
         drone.quit()
