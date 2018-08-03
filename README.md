@@ -17,7 +17,7 @@ Or install from the source code.
 $ git clone https://github.com/hanyazou/TelloPy 
 $ cd TelloPy
 $ python setup.py bdist_wheel
-$ pip install dist/tellopy-0.2.0.dev*.whl --upgrade
+$ pip install dist/tellopy-*.dev*.whl --upgrade
 ```
 
 ## Documents
