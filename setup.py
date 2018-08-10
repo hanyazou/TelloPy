@@ -10,13 +10,13 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 setup(
     name='tellopy',
 
-    version='0.4.0',
+    version='0.5.0.dev0',
 
     description='DJI Tello drone controller',
     url='https://github.com/hanyazou/TelloPy',
     author='Hanyazou',
     author_email='hanyazou@gmail.com',
-    python_requires='>=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*, !=3.5.*, <4',
+    python_requires='>=2.7, !=3.0.*, !=3.1.*, !=3.2.*, !=3.3.*, !=3.4.*, <4',
 
     classifiers=[
         # How mature is this project? Common values are
@@ -38,8 +38,8 @@ setup(
         'Programming Language :: Python :: 2.7',
         # 'Programming Language :: Python :: 3',
         # 'Programming Language :: Python :: 3.4',
-        # 'Programming Language :: Python :: 3.5',
-        # 'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.5',
+        'Programming Language :: Python :: 3.6',
     ],
 
     keywords='sample development robotics drone',
