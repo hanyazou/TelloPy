@@ -71,9 +71,18 @@ def palm_land(drone, speed):
     drone.palm_land()
 
 def toggle_zoom(drone, speed):
+    # In "video" mode the drone sends 1280x720 frames.
+    # In "photo" mode it sends 2592x1936 (952x720) frames.
+    # The video will always be centered in the window.
+    # In photo mode, if we keep the window at 1280x720 that gives us ~160px on
+    # each side for status information, which is ample.
+    # Video mode is harder because then we need to abandon the 16:9 display size
+    # if we want to put the HUD next to the video.
     if speed == 0:
         return
     drone.set_video_mode(not drone.zoom)
+    pygame.display.get_surface().fill((0,0,0))
+    pygame.display.flip()
 
 controls = {
     'w': 'forward',
@@ -99,47 +108,88 @@ controls = {
     'return': take_picture,
 }
 
-def status_print(text):
-    if video_recorder:
-        text = text + ' [REC]'
-    pygame.display.set_caption(text)
-    print(text)
+class FlightDataDisplay(object):
+    # previous flight data value and surface to overlay
+    _value = None
+    _surface = None
+    # function (drone, data) => new value
+    # default is lambda drone,data: getattr(data, self._key)
+    _update = None
+    def __init__(self, key, format, colour=(255,255,255), update=None):
+        self._key = key
+        self._format = format
+        self._colour = colour
 
-def handler(event, sender, data, **args):
+        if update:
+            self._update = update
+        else:
+            self._update = lambda drone,data: getattr(data, self._key)
+
+    def update(self, drone, data):
+        new_value = self._update(drone, data)
+        if self._value != new_value:
+            self._value = new_value
+            self._surface = font.render(self._format % (new_value,), True, self._colour)
+        return self._surface
+
+def flight_data_mode(drone, *args):
+    return (drone.zoom and "VID" or "PIC")
+
+def flight_data_recording(*args):
+    return (video_recorder and "REC 00:00" or "")  # TODO: duration of recording
+
+def update_hud(hud, drone, flight_data):
+    (w,h) = (158,0) # width available on side of screen in 4:3 mode
+    blits = []
+    for element in hud:
+        surface = element.update(drone, flight_data)
+        if surface is None:
+            continue
+        blits += [(surface, (0, h))]
+        # w = max(w, surface.get_width())
+        h += surface.get_height()
+    h += 64  # add some padding
+    overlay = pygame.Surface((w, h), pygame.SRCALPHA)
+    overlay.fill((0,0,0)) # remove for mplayer overlay mode
+    for blit in blits:
+        overlay.blit(*blit)
+    pygame.display.get_surface().blit(overlay, (0,0))
+    pygame.display.update(overlay.get_rect())
+
+def status_print(text):
+    pygame.display.set_caption(text)
+
+hud = [
+    FlightDataDisplay('height', 'ALT %3d'),
+    FlightDataDisplay('ground_speed', 'SPD %3d'),
+    FlightDataDisplay('battery_percentage', 'BAT %3d%%'),
+    FlightDataDisplay('wifi_strength', 'NET %3d%%'),
+    FlightDataDisplay(None, 'CAM %s', update=flight_data_mode),
+    FlightDataDisplay(None, '%s', colour=(255, 0, 0), update=flight_data_recording),
+]
+
+def flightDataHandler(event, sender, data):
     global prev_flight_data
+    text = str(data)
+    if prev_flight_data != text:
+        update_hud(hud, sender, data)
+        prev_flight_data = text
+
+def videoFrameHandler(event, sender, data):
     global video_player
     global video_recorder
-    drone = sender
-    if event is drone.EVENT_FLIGHT_DATA:
-        text = str(data)
-        if data.battery_percentage <= 10:
-            text = '!! LOW BAT !!' + text
-        if prev_flight_data != text:
-            status_print(text)
-            prev_flight_data = text
-    elif event is drone.EVENT_VIDEO_FRAME:
-        if video_player is None:
-            video_player = Popen([
-                'mplayer', '-fps', '30', '-really-quiet', '-wid', str(wid),
-                '-'],
-                stdin=PIPE)
-        try:
-            video_player.stdin.write(data)
-            if video_recorder:
-                video_recorder.stdin.write(data)
-        except IOError as err:
-            status_print(str(err))
-            video_player = None
-    else:
-        status_print('event="%s" data=%s' % (event.getname(), str(data)))
-
-
-def update(old, new, max_delta=0.3):
-    if abs(old - new) <= max_delta:
-        res = new
-    else:
-        res = 0.0
-    return res
+    if video_player is None:
+        video_player = Popen([
+            'mplayer', '-fps', '30', '-really-quiet', '-wid', str(wid),
+            '-'],
+            stdin=PIPE)
+    try:
+        video_player.stdin.write(data)
+        if video_recorder:
+            video_recorder.stdin.write(data)
+    except IOError as err:
+        status_print(str(err))
+        video_player = None
 
 
 def main():
@@ -149,21 +199,18 @@ def main():
     pygame.font.init()
 
     global font
-    font = pygame.font.Font(None, 32)
+    font = pygame.font.SysFont("dejavusansmono", 32)
 
     global wid
     wid = pygame.display.get_wm_info()['window']
+    print("Tello video WID:", wid)
 
     drone = tellopy.Tello()
     drone.connect()
     drone.start_video()
-    drone.subscribe(drone.EVENT_FLIGHT_DATA, handler)
-    drone.subscribe(drone.EVENT_VIDEO_FRAME, handler)
+    drone.subscribe(drone.EVENT_FLIGHT_DATA, flightDataHandler)
+    drone.subscribe(drone.EVENT_VIDEO_FRAME, videoFrameHandler)
     speed = 30
-    throttle = 0.0
-    yaw = 0.0
-    pitch = 0.0
-    roll = 0.0
 
     try:
         while 1:
