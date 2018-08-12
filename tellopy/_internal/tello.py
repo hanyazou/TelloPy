@@ -531,7 +531,7 @@ class Tello(object):
         # Create a file in ~/Pictures/ to receive image data from the drone.
         # Don't bother preallocating, it'll get allocated as we seek around.
         self.picture_file = open('%s/Pictures/tello-%s.jpeg' % (
-            os.getenv('HOME'), datetime.datetime.now().isoformat()), 'w')
+            os.getenv('HOME'), datetime.datetime.now().isoformat()), 'wb')
         log.info('Open file for write: %s' % self.picture_file.name)
         # Packet data includes file ID and type -- I think -- but for now we
         # just ignore that and assume that (a) we're only receiving one file at
