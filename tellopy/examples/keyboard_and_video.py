@@ -29,6 +29,9 @@ import pygame.font
 import os
 import datetime
 from subprocess import Popen, PIPE
+# from tellopy import logger
+
+# log = tellopy.logger.Logger('TelloUI')
 
 prev_flight_data = None
 video_player = None
@@ -191,6 +194,14 @@ def videoFrameHandler(event, sender, data):
         status_print(str(err))
         video_player = None
 
+def handleFileReceived(event, sender, data):
+    # Create a file in ~/Pictures/ to receive image data from the drone.
+    path = '%s/Pictures/tello-%s.jpeg' % (
+        os.getenv('HOME'),
+        datetime.datetime.now().isoformat())
+    with open(path, 'wb') as fd:
+        fd.write(data)
+    status_print('Saved photo to %s' % path)
 
 def main():
     pygame.init()
@@ -210,6 +221,7 @@ def main():
     drone.start_video()
     drone.subscribe(drone.EVENT_FLIGHT_DATA, flightDataHandler)
     drone.subscribe(drone.EVENT_VIDEO_FRAME, videoFrameHandler)
+    drone.subscribe(drone.EVENT_FILE_RECEIVED, handleFileReceived)
     speed = 30
 
     try:
