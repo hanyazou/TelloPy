@@ -1,4 +1,5 @@
 import datetime
+from io import BytesIO
 
 from . import crc
 from . utils import *
@@ -195,3 +196,31 @@ class FlightData(object):
             (" | MODE: %2d" % self.fly_mode) +
             # (", drone_battery_left=0x%04x" % self.drone_battery_left) +
             "")
+
+class DownloadedFile(object):
+    def __init__(self, filenum, size):
+        self.filenum = filenum
+        self.size = size
+        self.bytes_recieved = 0
+        self.chunks_received = [0x00] * int((size / 1024 + 1) / 8 + 1)
+        self.buffer = BytesIO()
+
+    def done(self):
+        return self.bytes_recieved >= self.size
+
+    def data(self):
+        return self.buffer.getvalue()
+
+    def haveFragment(self, chunk, fragment):
+        return self.chunks_received[chunk] & (1<<(fragment%8))
+
+    def recvFragment(self, chunk, fragment, size, data):
+        if self.haveFragment(chunk, fragment):
+            return False
+        # Mark a fragment as received.
+        # Returns true if we have all fragments making up that chunk now.
+        self.buffer.seek(fragment*1024)
+        self.buffer.write(data)
+        self.bytes_recieved += size
+        self.chunks_received[chunk] |= (1<<(fragment%8))
+        return self.chunks_received[chunk] == 0xFF
