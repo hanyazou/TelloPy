@@ -29,6 +29,7 @@ class Tello(object):
     EVENT_VIDEO_FRAME = event.Event('video frame')
     EVENT_VIDEO_DATA = event.Event('video data')
     EVENT_DISCONNECTED = event.Event('disconnected')
+    EVENT_FILE_RECEIVED = event.Event('file received')
     # internal events
     __EVENT_CONN_REQ = event.Event('conn_req')
     __EVENT_CONN_ACK = event.Event('conn_ack')
@@ -82,8 +83,8 @@ class Tello(object):
         # video zoom state
         self.zoom = False
 
-        # file currently saving image data to
-        self.picture_file = None
+        # File recieve state.
+        self.file_recv = {}  # Map filenum -> protocol.DownloadedFile
 
         # Create a UDP socket
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -508,7 +509,16 @@ class Tello(object):
             # code doesn't support that yet, though, so don't take one photo
             # while another is still being received.
             log.info("recv: file size: %s" % byte_to_hexstring(data))
-            self.prepare_incoming_file(pkt.get_data())
+            if len(pkt.get_data()) >= 7:
+                (size, filenum) = struct.unpack('<xLH', pkt.get_data())
+                log.info('      file size: num=%d bytes=%d' % (filenum, size))
+                # Initialize file download state.
+                self.file_recv[filenum] = DownloadedFile(filenum, size)
+            else:
+                # We always seem to get two files, one with most of the payload missing.
+                # Not sure what the second one is for.
+                log.warn('      file size: payload too small: %s' % byte_to_hexstring(pkt.get_data()))
+            # Ack the packet.
             self.send_packet(pkt)
         elif cmd == TELLO_CMD_FILE_DATA:
             # log.info("recv: file data: %s" % byte_to_hexstring(data[9:21]))
@@ -521,61 +531,21 @@ class Tello(object):
 
         return True
 
-    def prepare_incoming_file(self, data):
-        log.info('prepare_incoming_file: %d' % len(data))
-        if len(data) < 5:
-            log.error('incoming file: data too short')
-            return
-        if self.picture_file:
-            log.error('incoming file: already in file receive mode')
-        # Create a file in ~/Pictures/ to receive image data from the drone.
-        # Don't bother preallocating, it'll get allocated as we seek around.
-        self.picture_file = open('%s/Pictures/tello-%s.jpeg' % (
-            os.getenv('HOME'), datetime.datetime.now().isoformat()), 'wb')
-        log.info('Open file for write: %s' % self.picture_file.name)
-        # Packet data includes file ID and type -- I think -- but for now we
-        # just ignore that and assume that (a) we're only receiving one file at
-        # a time and (b) all files are JPEGs. TODO: fix this.
-        (self.picture_file_size,) = struct.unpack('<xLxx', data)
-        self.picture_file_recvd = 0  # How much data have we received, in total.
-        # Bitmap of which fragments we've received.
-        # The file is divided into 1k fragments by the drone, which are grouped
-        # into 8k chunks. Indexes into this array are chunk IDs; each bit of
-        # an entry represents a fragment. Once an entry is 0xFF we have all
-        # fragments making up this chunk. This is used to determine when to
-        # send acknowledgements to the drone.
-        self.picture_file_chunks = [0x00] * int((self.picture_file_size / 1024 + 1) / 8 + 1)
-
     def recv_file_data(self, data):
-        def have_packet_already(chunk, index):
-            # Do we already have this fragment?
-            return self.picture_file_chunks[chunk] & (1<<(index%8))
-        def have_packet_now(chunk, index):
-            # Mark a fragment as received.
-            # Returns true if we have all fragments making up that chunk now.
-            self.picture_file_chunks[chunk] |= (1<<(index%8))
-            return self.picture_file_chunks[chunk] == 0xFF
+        (filenum,chunk,fragment,size) = struct.unpack('<HLLH', data[0:12])
+        file = self.file_recv.get(filenum, None)
 
-        if not self.picture_file:
-            # Got a file chunk while not in file-receive mode.
+        # Preconditions.
+        if file is None:
             return
 
-        (filenum,chunk,index,size) = struct.unpack('<HLLH', data[0:12])
-        if have_packet_already(chunk, index):
-            # Ignore duplicate chunks.
-            return
-        # Write out the data to the file and record our total file size.
-        self.picture_file.seek(index*1024)
-        self.picture_file.write(data[12:12+size])
-        self.picture_file_recvd += size
-        log.info('total file recv: %d' % self.picture_file_recvd)
-        # Record the received fragment.
-        if have_packet_now(chunk, index):
+        if file.recvFragment(chunk, fragment, size, data[12:12+size]):
             # Did this complete a chunk? Ack the chunk so the drone won't
             # re-send it.
             self.send_packet_data(TELLO_CMD_FILE_DATA, type=0x50,
                 payload=struct.pack('<BHL', 0, filenum, chunk))
-        if self.picture_file_recvd >= self.picture_file_size:
+
+        if file.done():
             # We have the whole file! First, send a normal ack with the first
             # byte set to 1 to indicate file completion.
             self.send_packet_data(TELLO_CMD_FILE_DATA, type=0x50,
@@ -583,9 +553,10 @@ class Tello(object):
             # Then send the FILE_COMPLETE packed separately telling it how
             # large we thought the file was.
             self.send_packet_data(TELLO_CMD_FILE_COMPLETE, type=0x48,
-                payload=struct.pack('<HL', filenum, self.picture_file_size))
-            self.picture_file.close()
-            self.picture_file = None
+                payload=struct.pack('<HL', filenum, file.size))
+            # Inform subscribers that we have a file and clean up.
+            self.__publish(event=self.EVENT_FILE_RECEIVED, data=file.data())
+            del self.file_recv[filenum]
 
     def __state_machine(self, event, sender, data, **args):
         self.lock.acquire()
