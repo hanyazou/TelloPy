@@ -10,7 +10,7 @@ with open(path.join(here, 'README.md'), encoding='utf-8') as f:
 setup(
     name='tellopy',
 
-    version='0.5.0',
+    version='0.6.0.dev0',
 
     description='DJI Tello drone controller',
     url='https://github.com/hanyazou/TelloPy',
