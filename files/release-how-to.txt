@@ -31,8 +31,12 @@ python3 -m tellopy.examples.joystick_and_video
 # upload package to PyPi
 twine upload dist/tellopy-0.4.0-py2.py3-none-any.whl 
 
+# create release tag
+git push
+git tag v0.4.0
+git push origin v0.4.0
+
 # create new development branch
-push
 git checkout -b develop-0.5.0
 git diff | cat
 -    version='0.4.0',
