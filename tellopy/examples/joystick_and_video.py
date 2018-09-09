@@ -108,6 +108,37 @@ class JoystickXONE:
     DEADZONE = 0.09
 
 
+class JoystickTARANIS:
+    # d-pad
+    UP = -1  # UP
+    DOWN = -1  # DOWN
+    ROTATE_LEFT = -1  # LEFT
+    ROTATE_RIGHT = -1  # RIGHT
+
+    # bumper triggers
+    TAKEOFF = 12  # left switch
+    LAND = 12  # left switch
+    # UNUSED = 7 #RT
+    # UNUSED = 6 #LT
+
+    # buttons
+    FORWARD = -1
+    BACKWARD = -1
+    LEFT = -1
+    RIGHT = -1
+
+    # axis
+    LEFT_X = 3
+    LEFT_Y = 0
+    RIGHT_X = 1
+    RIGHT_Y = 2
+    LEFT_X_REVERSE = 1.0
+    LEFT_Y_REVERSE = 1.0
+    RIGHT_X_REVERSE = 1.0
+    RIGHT_Y_REVERSE = 1.0
+    DEADZONE = 0.01
+
+
 prev_flight_data = None
 video_player = None
 buttons = None
@@ -202,6 +233,10 @@ def handle_input_event(drone, e):
             drone.left(speed)
     elif e.type == pygame.locals.JOYBUTTONUP:
         if e.button == buttons.TAKEOFF:
+            if throttle != 0.0:
+                print('###')
+                print('### throttle != 0.0 (This may hinder the drone from taking off)')
+                print('###')
             drone.takeoff()
         elif e.button == buttons.UP:
             drone.up(0)
@@ -237,6 +272,8 @@ def main():
             buttons = JoystickPS3
         elif js_name == 'Xbox One Wired Controller':
             buttons = JoystickXONE
+        elif js_name == 'FrSky Taranis Joystick':
+            buttons = JoystickTARANIS
     except pygame.error:
         pass
 
