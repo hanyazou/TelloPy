@@ -13,6 +13,7 @@ import tellopy
 import pygame
 import pygame.locals
 from subprocess import Popen, PIPE
+import delayqueue as dq
 
 
 class JoystickPS3:
@@ -141,16 +142,19 @@ class JoystickTARANIS:
 
 prev_flight_data = None
 video_player = None
+queue = dq.DelayQueue()
 buttons = None
 speed = 100
 throttle = 0.0
 yaw = 0.0
 pitch = 0.0
 roll = 0.0
+input_delay = 0.2
 
 def handler(event, sender, data, **args):
     global prev_flight_data
     global video_player
+    global queue
     drone = sender
     if event is drone.EVENT_FLIGHT_DATA:
         if prev_flight_data != str(data):
@@ -257,6 +261,7 @@ def handle_input_event(drone, e):
 
 
 def main():
+    global queue
     global buttons
     pygame.init()
     pygame.joystick.init()
@@ -292,7 +297,21 @@ def main():
             # loop with pygame.event.get() is too much tight w/o some sleep
             time.sleep(0.01)
             for e in pygame.event.get():
-                handle_input_event(drone, e)
+                if e.type == pygame.locals.JOYBUTTONDOWN or e.type == pygame.locals.JOYBUTTONUP:
+                    print('queue.PUT: %s' % e)
+                queue.put(e, delay=input_delay)
+
+            while 1:
+                try:
+                    e = queue.get()
+                except dq.NotReady:
+                    break
+                except dq.Empty:
+                    break
+                else:
+                    if e.type == pygame.locals.JOYBUTTONDOWN or e.type == pygame.locals.JOYBUTTONUP:
+                        print('queue.GET: %s' % e)
+                    handle_input_event(drone, e)
     except KeyboardInterrupt as e:
         print(e)
     except Exception as e:
