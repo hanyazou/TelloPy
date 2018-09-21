@@ -1,4 +1,5 @@
 import datetime
+from io import BytesIO
 
 from . import crc
 from . utils import *
@@ -12,12 +13,19 @@ LOG_MSG = 0x1050
 
 VIDEO_ENCODER_RATE_CMD = 0x20
 VIDEO_START_CMD = 0x25
+VIDEO_MODE_CMD = 0x0031
 EXPOSURE_CMD = 0x34
 TIME_CMD = 70
 STICK_CMD = 80
 TAKEOFF_CMD = 0x0054
 LAND_CMD = 0x0055
 FLIP_CMD = 0x005c
+PALM_LAND_CMD = 0x005e
+SET_ALT_LIMIT_CMD = 0x0058
+TAKE_PICTURE_COMMAND = 48
+TELLO_CMD_FILE_SIZE                 = 98     # pt50
+TELLO_CMD_FILE_DATA                 = 99     # pt50
+TELLO_CMD_FILE_COMPLETE             = 100    # pt48
 
 #Flip commands taken from Go version of code
 #FlipFront flips forward.
@@ -38,7 +46,7 @@ FlipBackRight = 6
 FlipForwardRight = 7
 
 class Packet(object):
-    def __init__(self, cmd, pkt_type=0x68):
+    def __init__(self, cmd, pkt_type=0x68, payload=b''):
         if isinstance(cmd, str):
             self.buf = bytearray()
             for c in cmd:
@@ -54,6 +62,7 @@ class Packet(object):
                 pkt_type,
                 (cmd & 0xff), ((cmd >> 8) & 0xff),
                 0, 0])
+            self.buf.extend(payload)
 
     def fixup(self, seq_num=0):
         buf = self.get_buffer()
@@ -179,8 +188,39 @@ class FlightData(object):
 
     def __str__(self):
         return (
-            ("height=%2d" % self.height) +
-            (", fly_mode=0x%02x" % self.fly_mode) +
-            (", battery_percentage=%2d" % self.battery_percentage) +
-            (", drone_battery_left=0x%04x" % self.drone_battery_left) +
+            ("ALT: %2d" % self.height) +
+            (" | SPD: %2d" % self.ground_speed) +
+            (" | BAT: %2d" % self.battery_percentage) +
+            (" | WIFI: %2d" % self.wifi_strength) +
+            (" | CAM: %2d" % self.camera_state) +
+            (" | MODE: %2d" % self.fly_mode) +
+            # (", drone_battery_left=0x%04x" % self.drone_battery_left) +
             "")
+
+class DownloadedFile(object):
+    def __init__(self, filenum, size):
+        self.filenum = filenum
+        self.size = size
+        self.bytes_recieved = 0
+        self.chunks_received = [0x00] * int((size / 1024 + 1) / 8 + 1)
+        self.buffer = BytesIO()
+
+    def done(self):
+        return self.bytes_recieved >= self.size
+
+    def data(self):
+        return self.buffer.getvalue()
+
+    def haveFragment(self, chunk, fragment):
+        return self.chunks_received[chunk] & (1<<(fragment%8))
+
+    def recvFragment(self, chunk, fragment, size, data):
+        if self.haveFragment(chunk, fragment):
+            return False
+        # Mark a fragment as received.
+        # Returns true if we have all fragments making up that chunk now.
+        self.buffer.seek(fragment*1024)
+        self.buffer.write(data)
+        self.bytes_recieved += size
+        self.chunks_received[chunk] |= (1<<(fragment%8))
+        return self.chunks_received[chunk] == 0xFF

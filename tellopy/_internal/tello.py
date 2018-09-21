@@ -2,7 +2,9 @@ import threading
 import socket
 import time
 import datetime
+import struct
 import sys
+import os
 
 from . import crc
 from . import logger
@@ -27,6 +29,7 @@ class Tello(object):
     EVENT_VIDEO_FRAME = event.Event('video frame')
     EVENT_VIDEO_DATA = event.Event('video data')
     EVENT_DISCONNECTED = event.Event('disconnected')
+    EVENT_FILE_RECEIVED = event.Event('file received')
     # internal events
     __EVENT_CONN_REQ = event.Event('conn_req')
     __EVENT_CONN_ACK = event.Event('conn_ack')
@@ -75,6 +78,13 @@ class Tello(object):
         self.exposure = 0
         self.video_encoder_rate = 4
         self.video_stream = None
+        self.wifi_strength = 0
+
+        # video zoom state
+        self.zoom = False
+
+        # File recieve state.
+        self.file_recv = {}  # Map filenum -> protocol.DownloadedFile
 
         # Create a UDP socket
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -145,6 +155,11 @@ class Tello(object):
 
     def takeoff(self):
         """Takeoff tells the drones to liftoff and start flying."""
+        log.info('set altitude limit 30m')
+        pkt = Packet(SET_ALT_LIMIT_CMD)
+        pkt.add_byte(0x1e)  # 30m
+        pkt.add_byte(0x00)
+        self.send_packet(pkt)
         log.info('takeoff (cmd=0x%02x seq=0x%04x)' % (TAKEOFF_CMD, self.pkt_seq_num))
         pkt = Packet(TAKEOFF_CMD)
         pkt.fixup()
@@ -154,6 +169,14 @@ class Tello(object):
         """Land tells the drone to come in for landing."""
         log.info('land (cmd=0x%02x seq=0x%04x)' % (LAND_CMD, self.pkt_seq_num))
         pkt = Packet(LAND_CMD)
+        pkt.add_byte(0x00)
+        pkt.fixup()
+        return self.send_packet(pkt)
+
+    def palm_land(self):
+        """Tells the drone to wait for a hand underneath it and then land."""
+        log.info('palmland (cmd=0x%02x seq=0x%04x)' % (PALM_LAND_CMD, self.pkt_seq_num))
+        pkt = Packet(PALM_LAND_CMD)
         pkt.add_byte(0x00)
         pkt.fixup()
         return self.send_packet(pkt)
@@ -175,6 +198,20 @@ class Tello(object):
         pkt = Packet(VIDEO_START_CMD, 0x60)
         pkt.fixup()
         return self.send_packet(pkt)
+
+    def __send_video_mode(self, mode):
+        pkt = Packet(VIDEO_MODE_CMD)
+        pkt.add_byte(mode)
+        pkt.fixup()
+        return self.send_packet(pkt)
+
+    def set_video_mode(self, zoom=False):
+        """Tell the drone whether to capture 960x720 4:3 video, or 1280x720 16:9 zoomed video.
+        4:3 has a wider field of view (both vertically and horizontally), 16:9 is crisper."""
+        log.info('set video mode zoom=%s (cmd=0x%02x seq=0x%04x)' % (
+            zoom, VIDEO_START_CMD, self.pkt_seq_num))
+        self.zoom = zoom
+        return self.__send_video_mode(int(zoom))
 
     def start_video(self):
         """Start_video tells the drone to send start info (SPS/PPS) for video stream."""
@@ -210,6 +247,10 @@ class Tello(object):
         pkt.add_byte(self.video_encoder_rate)
         pkt.fixup()
         return self.send_packet(pkt)
+
+    def take_picture(self):
+        log.info('take picture')
+        return self.send_packet_data(TAKE_PICTURE_COMMAND, type=0x68)
 
     def up(self, val):
         """Up tells the drone to ascend. Pass in an int from 0-100."""
@@ -264,7 +305,7 @@ class Tello(object):
         pkt.add_byte(FlipFront)
         pkt.fixup()
         return self.send_packet(pkt)
-		
+
     def flip_back(self):
         """flip_back tells the drone to perform a backwards flip"""
         log.info('flip_back (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
@@ -272,7 +313,7 @@ class Tello(object):
         pkt.add_byte(FlipBack)
         pkt.fixup()
         return self.send_packet(pkt)
-		
+
     def flip_right(self):
         """flip_right tells the drone to perform a right flip"""
         log.info('flip_right (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
@@ -412,6 +453,11 @@ class Tello(object):
 
         return True
 
+    def send_packet_data(self, command, type=0x68, payload=[]):
+        pkt = Packet(command, type, payload)
+        pkt.fixup()
+        return self.send_packet(pkt)
+
     def __process_packet(self, data):
         if isinstance(data, str):
             data = bytearray([x for x in data])
@@ -440,25 +486,77 @@ class Tello(object):
             self.__publish(event=self.EVENT_LOG, data=data[9:])
         elif cmd == WIFI_MSG:
             log.debug("recv: wifi: %s" % byte_to_hexstring(data[9:]))
+            self.wifi_strength = data[9]
             self.__publish(event=self.EVENT_WIFI, data=data[9:])
         elif cmd == LIGHT_MSG:
             log.debug("recv: light: %s" % byte_to_hexstring(data[9:]))
             self.__publish(event=self.EVENT_LIGHT, data=data[9:])
         elif cmd == FLIGHT_MSG:
             flight_data = FlightData(data[9:])
+            flight_data.wifi_strength = self.wifi_strength
             log.debug("recv: flight data: %s" % str(flight_data))
             self.__publish(event=self.EVENT_FLIGHT_DATA, data=flight_data)
         elif cmd == TIME_CMD:
             log.debug("recv: time data: %s" % byte_to_hexstring(data))
             self.__publish(event=self.EVENT_TIME, data=data[7:9])
-        elif (TAKEOFF_CMD, LAND_CMD, VIDEO_START_CMD, VIDEO_ENCODER_RATE_CMD):
+        elif cmd in (TAKEOFF_CMD, LAND_CMD, VIDEO_START_CMD, VIDEO_ENCODER_RATE_CMD, PALM_LAND_CMD):
             log.info("recv: ack: cmd=0x%02x seq=0x%04x %s" %
                      (int16(data[5], data[6]), int16(data[7], data[8]), byte_to_hexstring(data)))
+        elif cmd == TELLO_CMD_FILE_SIZE:
+            # Drone is about to send us a file. Get ready.
+            # N.b. one of the fields in the packet is a file ID; by demuxing
+            # based on file ID we can receive multiple files at once. This
+            # code doesn't support that yet, though, so don't take one photo
+            # while another is still being received.
+            log.info("recv: file size: %s" % byte_to_hexstring(data))
+            if len(pkt.get_data()) >= 7:
+                (size, filenum) = struct.unpack('<xLH', pkt.get_data())
+                log.info('      file size: num=%d bytes=%d' % (filenum, size))
+                # Initialize file download state.
+                self.file_recv[filenum] = DownloadedFile(filenum, size)
+            else:
+                # We always seem to get two files, one with most of the payload missing.
+                # Not sure what the second one is for.
+                log.warn('      file size: payload too small: %s' % byte_to_hexstring(pkt.get_data()))
+            # Ack the packet.
+            self.send_packet(pkt)
+        elif cmd == TELLO_CMD_FILE_DATA:
+            # log.info("recv: file data: %s" % byte_to_hexstring(data[9:21]))
+            # Drone is sending us a fragment of a file it told us to prepare
+            # for earlier.
+            self.recv_file_data(pkt.get_data())
         else:
-            log.info('unknown packet: %s' % byte_to_hexstring(data))
+            log.info('unknown packet: %04x %s' % (cmd, byte_to_hexstring(data)))
             return False
 
         return True
+
+    def recv_file_data(self, data):
+        (filenum,chunk,fragment,size) = struct.unpack('<HLLH', data[0:12])
+        file = self.file_recv.get(filenum, None)
+
+        # Preconditions.
+        if file is None:
+            return
+
+        if file.recvFragment(chunk, fragment, size, data[12:12+size]):
+            # Did this complete a chunk? Ack the chunk so the drone won't
+            # re-send it.
+            self.send_packet_data(TELLO_CMD_FILE_DATA, type=0x50,
+                payload=struct.pack('<BHL', 0, filenum, chunk))
+
+        if file.done():
+            # We have the whole file! First, send a normal ack with the first
+            # byte set to 1 to indicate file completion.
+            self.send_packet_data(TELLO_CMD_FILE_DATA, type=0x50,
+                payload=struct.pack('<BHL', 1, filenum, chunk))
+            # Then send the FILE_COMPLETE packed separately telling it how
+            # large we thought the file was.
+            self.send_packet_data(TELLO_CMD_FILE_COMPLETE, type=0x48,
+                payload=struct.pack('<HL', filenum, file.size))
+            # Inform subscribers that we have a file and clean up.
+            self.__publish(event=self.EVENT_FILE_RECEIVED, data=file.data())
+            del self.file_recv[filenum]
 
     def __state_machine(self, event, sender, data, **args):
         self.lock.acquire()
