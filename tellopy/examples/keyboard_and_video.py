@@ -38,9 +38,11 @@ video_player = None
 video_recorder = None
 font = None
 wid = None
+date_fmt = '%Y-%m-%d_%H%M%S'
 
 def toggle_recording(drone, speed):
     global video_recorder
+    global date_fmt
     if speed == 0:
         return
 
@@ -52,7 +54,8 @@ def toggle_recording(drone, speed):
         return
 
     # start a new recording
-    filename = '%s/Pictures/tello-%s.mp4' % (os.getenv('HOME'), datetime.datetime.now().isoformat())
+    filename = '%s/Pictures/tello-%s.mp4' % (os.getenv('HOME'),
+                                             datetime.datetime.now().strftime(date_fmt))
     video_recorder = Popen([
         'mencoder', '-', '-vc', 'x264', '-fps', '30', '-ovc', 'copy',
         '-of', 'lavf', '-lavfopts', 'format=mp4', '-ffourcc', 'avc1',
@@ -61,7 +64,6 @@ def toggle_recording(drone, speed):
     ], stdin=PIPE)
     video_recorder.video_filename = filename
     status_print('Recording video to %s' % filename)
-    video_file = open(filename, 'w')
 
 def take_picture(drone, speed):
     if speed == 0:
@@ -186,19 +188,26 @@ def videoFrameHandler(event, sender, data):
         if wid is not None:
             cmd = cmd + [ '-wid', str(wid) ]
         video_player = Popen(cmd + ['-'], stdin=PIPE)
+
     try:
         video_player.stdin.write(data)
-        if video_recorder:
-            video_recorder.stdin.write(data)
     except IOError as err:
         status_print(str(err))
         video_player = None
 
+    try:
+        if video_recorder:
+            video_recorder.stdin.write(data)
+    except IOError as err:
+        status_print(str(err))
+        video_recorder = None
+
 def handleFileReceived(event, sender, data):
+    global date_fmt
     # Create a file in ~/Pictures/ to receive image data from the drone.
     path = '%s/Pictures/tello-%s.jpeg' % (
         os.getenv('HOME'),
-        datetime.datetime.now().isoformat())
+        datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S'))
     with open(path, 'wb') as fd:
         fd.write(data)
     status_print('Saved photo to %s' % path)
