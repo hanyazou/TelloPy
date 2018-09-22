@@ -58,7 +58,8 @@ def toggle_recording(drone, speed):
                                              datetime.datetime.now().strftime(date_fmt))
     video_recorder = Popen([
         'mencoder', '-', '-vc', 'x264', '-fps', '30', '-ovc', 'copy',
-        '-of', 'lavf', '-lavfopts', 'format=mp4', '-ffourcc', 'avc1',
+        '-of', 'lavf', '-lavfopts', 'format=mp4',
+        # '-ffourcc', 'avc1',
         # '-really-quiet',
         '-o', filename,
     ], stdin=PIPE)
