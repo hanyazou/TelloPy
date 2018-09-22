@@ -182,10 +182,10 @@ def videoFrameHandler(event, sender, data):
     global video_player
     global video_recorder
     if video_player is None:
-        video_player = Popen([
-            'mplayer', '-fps', '30', '-really-quiet', '-wid', str(wid),
-            '-'],
-            stdin=PIPE)
+        cmd = [ 'mplayer', '-fps', '30', '-really-quiet' ]
+        if wid is not None:
+            cmd = cmd + [ '-wid', str(wid) ]
+        video_player = Popen(cmd + ['-'], stdin=PIPE)
     try:
         video_player.stdin.write(data)
         if video_recorder:
@@ -213,7 +213,8 @@ def main():
     font = pygame.font.SysFont("dejavusansmono", 32)
 
     global wid
-    wid = pygame.display.get_wm_info()['window']
+    if 'window' in pygame.display.get_wm_info():
+        wid = pygame.display.get_wm_info()['window']
     print("Tello video WID:", wid)
 
     drone = tellopy.Tello()
