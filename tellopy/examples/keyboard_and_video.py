@@ -182,7 +182,7 @@ def videoFrameHandler(event, sender, data):
     global video_player
     global video_recorder
     if video_player is None:
-        cmd = [ 'mplayer', '-fps', '30', '-really-quiet' ]
+        cmd = [ 'mplayer', '-fps', '35', '-really-quiet' ]
         if wid is not None:
             cmd = cmd + [ '-wid', str(wid) ]
         video_player = Popen(cmd + ['-'], stdin=PIPE)
