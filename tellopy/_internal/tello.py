@@ -480,7 +480,7 @@ class Tello(object):
             return False
 
         pkt = Packet(data)
-        cmd = int16(data[5], data[6])
+        cmd = uint16(data[5], data[6])
         if cmd == LOG_MSG:
             log.debug("recv: log: %s" % byte_to_hexstring(data[9:]))
             self.__publish(event=self.EVENT_LOG, data=data[9:])
@@ -501,7 +501,7 @@ class Tello(object):
             self.__publish(event=self.EVENT_TIME, data=data[7:9])
         elif cmd in (TAKEOFF_CMD, LAND_CMD, VIDEO_START_CMD, VIDEO_ENCODER_RATE_CMD, PALM_LAND_CMD):
             log.info("recv: ack: cmd=0x%02x seq=0x%04x %s" %
-                     (int16(data[5], data[6]), int16(data[7], data[8]), byte_to_hexstring(data)))
+                     (uint16(data[5], data[6]), uint16(data[7], data[8]), byte_to_hexstring(data)))
         elif cmd == TELLO_CMD_FILE_SIZE:
             # Drone is about to send us a file. Get ready.
             # N.b. one of the fields in the packet is a file ID; by demuxing

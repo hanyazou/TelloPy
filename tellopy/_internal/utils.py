@@ -12,8 +12,15 @@ def le16(val):
     return (val & 0xff), ((val >> 8) & 0xff)
 
 
-def int16(val0, val1):
+def uint16(val0, val1):
     return (val0 & 0xff) | ((val1 & 0xff) << 8)
+
+
+def int16(val0, val1):
+    if (val1 & 0xff) is not 0:
+        return ((val0 & 0xff) | ((val1 & 0xff) << 8)) - 0x10000
+    else:
+        return (val0 & 0xff) | ((val1 & 0xff) << 8)
 
 
 def byte_to_hexstring(buf):
