@@ -643,7 +643,7 @@ class Tello(object):
         log.info('video receive buffer size = %d' %
                  sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF))
 
-        prev_header = None
+        prev_video_data = None
         prev_ts = None
         history = []
         while self.state != self.STATE_QUIT:
@@ -657,19 +657,13 @@ class Tello(object):
                 show_history = False
 
                 # check video data loss
-                header = byte(data[0])
-                if (prev_header is not None and
-                    header != prev_header and
-                    header != ((prev_header + 1) & 0xff)):
-                    loss = header - prev_header
-                    if loss < 0:
-                        loss = loss + 256
+                video_data = VideoData(data)
+                loss = video_data.gap(prev_video_data)
+                if loss != 0:
                     self.video_data_loss += loss
-                    #
                     # enable this line to see packet history
                     # show_history = True
-                    #
-                prev_header = header
+                prev_video_data = video_data
 
                 # check video data interval
                 if prev_ts is not None and 0.1 < (now - prev_ts).total_seconds():

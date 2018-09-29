@@ -224,3 +224,30 @@ class DownloadedFile(object):
         self.bytes_recieved += size
         self.chunks_received[chunk] |= (1<<(fragment%8))
         return self.chunks_received[chunk] == 0xFF
+
+
+class VideoData(object):
+    packets_per_frame = 0
+    def __init__(self, data):
+        self.h0 = data[0]
+        self.h1 = data[1]
+        if VideoData.packets_per_frame < (self.h1 & 0x7f):
+            VideoData.packets_per_frame = (self.h1 & 0x7f)
+
+    def gap(self, video_data):
+        if video_data is None:
+            return 0
+
+        v0 = self
+        v1 = video_data
+
+        loss = 0
+        if ((v0.h0 != v1.h0 and v0.h0 != ((v1.h0 + 1) & 0xff))
+            or (v0.h0 != v1.h0 and (v0.h1 & 0x7f) != 00)
+            or (v0.h0 == v1.h0 and (v0.h1 & 0x7f) != (v1.h1 & 0x7f) + 1)):
+            loss = v0.h0 - v1.h0
+            if loss < 0:
+                loss = loss + 256
+            loss = loss * VideoData.packets_per_frame + ((v0.h1 & 0x7f) - (v1.h1 & 0x7f) - 1)
+
+        return loss
