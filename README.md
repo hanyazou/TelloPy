@@ -64,6 +64,6 @@ $ python -m tellopy.examples.joystick_and_video
 
 ## Hand_motion Tello controller.
 
-You can find a hand_motion controller for the Tello in this project (https://github.com/GalBrandwine/HalloPy),
-and controll your tello using only your hand movements!
+You can find a hand_motion controller for the Tello in this project: https://github.com/GalBrandwine/HalloPy,
+and controll your tello using hand movements!
 
