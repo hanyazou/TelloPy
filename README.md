@@ -67,3 +67,8 @@ $ python -m tellopy.examples.joystick_and_video
 You can find a hand_motion controller for the Tello in this project: https://github.com/GalBrandwine/HalloPy,
 and controll your tello using hand movements!
 
+###  OpenCV based Tello controller
+
+This interfaces with the drone through openCV and generates frames from the video stream for computer vision applications. It comes with a tracker that will detect a color in the scene and follow it:
+https://github.com/Ubotica/telloCV/
+ 
