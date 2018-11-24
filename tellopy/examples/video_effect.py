@@ -27,7 +27,12 @@ def main():
                 cv2.imshow('Original', image)
                 cv2.imshow('Canny', cv2.Canny(image, 100, 200))
                 cv2.waitKey(1)
-                frame_skip = int((time.time() - start_time)/frame.time_base)
+                if frame.time_base < 1.0/60:
+                    time_base = 1.0/60
+                else:
+                    time_base = frame.time_base
+                frame_skip = int((time.time() - start_time)/time_base)
+                    
 
     except Exception as ex:
         exc_type, exc_value, exc_traceback = sys.exc_info()
