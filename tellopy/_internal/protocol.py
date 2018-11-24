@@ -229,8 +229,8 @@ class DownloadedFile(object):
 class VideoData(object):
     packets_per_frame = 0
     def __init__(self, data):
-        self.h0 = data[0]
-        self.h1 = data[1]
+        self.h0 = byte(data[0])
+        self.h1 = byte(data[1])
         if VideoData.packets_per_frame < (self.h1 & 0x7f):
             VideoData.packets_per_frame = (self.h1 & 0x7f)
 

@@ -53,7 +53,7 @@ class VideoStream(object):
                 self.wait_first_packet_in_frame = True
                 
             self.prev_video_data = video_data
-            if self.wait_first_packet_in_frame and data[1] != 0:
+            if self.wait_first_packet_in_frame and byte(data[1]) != 0:
                 self.ignore_packets += 1
                 return
             if self.wait_first_packet_in_frame:
