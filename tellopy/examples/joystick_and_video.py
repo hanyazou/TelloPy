@@ -77,6 +77,37 @@ class JoystickPS4:
     DEADZONE = 0.08
 
 
+class JoystickPS4ALT:
+    # d-pad
+    UP = -1  # UP
+    DOWN = -1  # DOWN
+    ROTATE_LEFT = -1  # LEFT
+    ROTATE_RIGHT = -1  # RIGHT
+
+    # bumper triggers
+    TAKEOFF = 5  # R1
+    LAND = 4  # L1
+    # UNUSED = 7 #R2
+    # UNUSED = 6 #L2
+
+    # buttons
+    FORWARD = 3  # TRIANGLE
+    BACKWARD = 1  # CROSS
+    LEFT = 0  # SQUARE
+    RIGHT = 2  # CIRCLE
+
+    # axis
+    LEFT_X = 0
+    LEFT_Y = 1
+    RIGHT_X = 3
+    RIGHT_Y = 4
+    LEFT_X_REVERSE = 1.0
+    LEFT_Y_REVERSE = -1.0
+    RIGHT_X_REVERSE = 1.0
+    RIGHT_Y_REVERSE = -1.0
+    DEADZONE = 0.08
+
+
 class JoystickXONE:
     # d-pad
     UP = 0  # UP
@@ -268,6 +299,8 @@ def main():
         print('Joystick name: ' + js_name)
         if js_name in ('Wireless Controller', 'Sony Computer Entertainment Wireless Controller', 'Sony Interactive Entertainment Wireless Controller')):
             buttons = JoystickPS4
+        if js_name in ('Sony Interactive Entertainment Wireless Controller')):
+            buttons = JoystickPS4ALT
         elif js_name in ('PLAYSTATION(R)3 Controller', 'Sony PLAYSTATION(R)3 Controller'):
             buttons = JoystickPS3
         elif js_name == 'Xbox One Wired Controller':
