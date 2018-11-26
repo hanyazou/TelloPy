@@ -266,7 +266,7 @@ def main():
         js.init()
         js_name = js.get_name()
         print('Joystick name: ' + js_name)
-        if js_name in ('Wireless Controller', 'Sony Computer Entertainment Wireless Controller'):
+        if js_name in ('Wireless Controller', 'Sony Computer Entertainment Wireless Controller', 'Sony Interactive Entertainment Wireless Controller')):
             buttons = JoystickPS4
         elif js_name in ('PLAYSTATION(R)3 Controller', 'Sony PLAYSTATION(R)3 Controller'):
             buttons = JoystickPS3
