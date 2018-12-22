@@ -24,7 +24,10 @@ class Tello(object):
     EVENT_WIFI = event.Event('wifi')
     EVENT_LIGHT = event.Event('light')
     EVENT_FLIGHT_DATA = event.Event('fligt_data')
-    EVENT_LOG = event.Event('log')
+    EVENT_LOG_HEADER = event.Event('log_header')
+    EVENT_LOG = EVENT_LOG_HEADER
+    EVENT_LOG_RAWDATA = event.Event('log_rawdata')
+    EVENT_LOG_DATA = event.Event('log_data')
     EVENT_TIME = event.Event('time')
     EVENT_VIDEO_FRAME = event.Event('video frame')
     EVENT_VIDEO_DATA = event.Event('video data')
@@ -79,6 +82,8 @@ class Tello(object):
         self.video_encoder_rate = 4
         self.video_stream = None
         self.wifi_strength = 0
+        self.log_data = LogData(log)
+        self.prev_log_data_time = None
 
         # video zoom state
         self.zoom = False
@@ -438,6 +443,15 @@ class Tello(object):
         log.debug("stick command: %s" % byte_to_hexstring(pkt.get_buffer()))
         return self.send_packet(pkt)
 
+    def __send_ack_log(self, id):
+        pkt = Packet(LOG_HEADER_MSG, 0x50)
+        pkt.add_byte(0x00)
+        b0, b1 = le16(id)
+        pkt.add_byte(b0)
+        pkt.add_byte(b1)
+        pkt.fixup()
+        return self.send_packet(pkt)
+
     def send_packet(self, pkt):
         """Send_packet is used to send a command packet to the drone."""
         try:
@@ -481,9 +495,28 @@ class Tello(object):
 
         pkt = Packet(data)
         cmd = uint16(data[5], data[6])
-        if cmd == LOG_MSG:
-            log.debug("recv: log: %s" % byte_to_hexstring(data[9:]))
-            self.__publish(event=self.EVENT_LOG, data=data[9:])
+        if cmd == LOG_HEADER_MSG:
+            id = uint16(data[9], data[10])
+            log.info("recv: log_header: id=%04x, '%s'" % (id, str(data[28:54])))
+            log.debug("recv: log_header: %s" % byte_to_hexstring(data[9:]))
+            self.__send_ack_log(id)
+            self.__publish(event=self.EVENT_LOG_HEADER, data=data[9:])
+        elif cmd == LOG_DATA_MSG:
+            log.debug("recv: log_data: length=%d, %s" % (len(data[9:]), byte_to_hexstring(data[9:])))
+            self.log_data.update(data[9:])
+            # show log data
+            now = datetime.datetime.now()
+            if self.prev_log_data_time is None:
+                self.prev_log_data_time = now
+            dur = (now - self.prev_log_data_time).total_seconds()
+            if 2.0 < dur:
+                log.info("log_data: %s" % self.log_data)
+                self.prev_log_data_time = now
+            self.__publish(event=self.EVENT_LOG_RAWDATA, data=data[9:])
+            self.__publish(event=self.EVENT_LOG_DATA, data=self.log_data)
+        elif cmd == LOG_CONFIG_MSG:
+            log.debug("recv: log_config: length=%d, %s" % (len(data[9:]), byte_to_hexstring(data[9:])))
+            self.__publish(event=self.EVENT_LOG_DATA, data=data[9:])
         elif cmd == WIFI_MSG:
             log.debug("recv: wifi: %s" % byte_to_hexstring(data[9:]))
             self.wifi_strength = data[9]

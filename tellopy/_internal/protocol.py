@@ -1,4 +1,5 @@
 import datetime
+import struct
 from io import BytesIO
 
 from . import crc
@@ -25,7 +26,9 @@ PALM_LAND_CMD                       = 0x005e
 TELLO_CMD_FILE_SIZE                 = 0x0062  # pt50
 TELLO_CMD_FILE_DATA                 = 0x0063  # pt50
 TELLO_CMD_FILE_COMPLETE             = 0x0064  # pt48
-LOG_MSG                             = 0x1050
+LOG_HEADER_MSG                      = 0x1050
+LOG_DATA_MSG                        = 0x1051
+LOG_CONFIG_MSG                      = 0x1052
 
 #Flip commands taken from Go version of code
 #FlipFront flips forward.
@@ -251,3 +254,118 @@ class VideoData(object):
             loss = loss * VideoData.packets_per_frame + ((v0.h1 & 0x7f) - (v1.h1 & 0x7f) - 1)
 
         return loss
+
+
+class LogData(object):
+    ID_NEW_MVO_FEEDBACK                = 29
+    ID_IMU_ATTI                        = 2048
+    unknowns = []
+
+    def __init__(self, log, data = None):
+        self.log = log
+        self.count = 0
+        self.new_mvo_feedback = LogNewMvoFeedback(log)
+        self.imu_atti = LogImuAtti(log)
+        if data:
+            self.update(data)
+
+    def __str__(self):
+        return (str(self.new_mvo_feedback) + ' | ' +
+                str(self.imu_atti) +
+                "")
+
+    def update(self, data):
+        if isinstance(data, bytearray):
+            data = str(data)
+
+        self.log.debug('LogData: data length=%d' % len(data))
+        self.count += 1
+        pos = 1
+        while (pos < len(data) - 2):
+            if (struct.unpack_from('B', data, pos+0)[0] != 0x55):
+                self.log.error('LogData: corrupted data at pos=%d, data=%s'
+                               % (pos, byte_to_hexstring(data[pos:])))
+                break
+            length = struct.unpack_from('<h', data, pos+1)[0]
+            checksum = data[pos+3]
+            id = struct.unpack_from('<H', data, pos+4)[0]
+            # 4bytes data[6:9] is tick
+            # last 2 bytes are CRC
+            # length-12 is the byte length of payload
+            xorval = data[pos+6]
+            if isinstance(data, str):
+                payload = bytearray([ord(x) ^ ord(xorval) for x in data[pos+10:pos+10+length-12]])
+            else:
+                payload = bytearray([x ^ xorval for x in data[pos+10:pos+10+length-12]])
+            if id == self.ID_NEW_MVO_FEEDBACK:
+                self.new_mvo_feedback.update(payload, self.count)
+            elif id == self.ID_IMU_ATTI:
+                self.imu_atti.update(payload, self.count)
+            else:
+                if not id in self.unknowns:
+                    self.log.info('LogData: UNHANDLED LOG DATA: id=%5d, length=%4d' % (id, length-12))
+                    self.unknowns.append(id)
+
+            pos += length
+
+
+class LogNewMvoFeedback(object):
+    def __init__(self, log = None, data = None):
+        self.log = log
+        self.count = 0
+        self.vel_x = 0.0
+        self.vel_y = 0.0
+        self.vel_z = 0.0
+        self.pos_x = 0.0
+        self.pos_y = 0.0
+        self.pos_z = 0.0
+        if (data != None):
+            self.update(data, count)
+
+    def __str__(self):
+        return (
+            ("VEL: %5.2f %5.2f %5.2f" % (self.vel_x, self.vel_y, self.vel_z))+
+            (" POS: %5.2f %5.2f %5.2f" % (self.pos_x, self.pos_y, self.pos_z))+
+            "")
+
+    def update(self, data, count = 0):
+        self.log.debug('LogNewMvoFeedback: length=%d %s' % (len(data), byte_to_hexstring(data)))
+        self.count = count
+        self.vel_x = struct.unpack_from('<h', data, 2)[0] / 100.0
+        self.vel_x = struct.unpack_from('<h', data, 4)[0] / 100.0
+        self.vel_x = struct.unpack_from('<h', data, 6)[0] / 100.0
+        self.pos_x = struct.unpack_from('f', data, 8)[0]
+        self.pos_y = struct.unpack_from('f', data, 12)[0]
+        self.pos_z = struct.unpack_from('f', data, 16)[0]
+        self.log.debug('LogNewMvoFeedback: ' + str(self))
+
+
+class LogImuAtti(object):
+    def __init__(self, log = None, data = None):
+        self.log = log
+        self.count = 0
+        self.longti = 0.0
+        self.lati = 0.0
+        self.alti = 0.0
+        self.acc_x = 0.0
+        self.acc_y = 0.0
+        self.acc_z = 0.0
+        if (data != None):
+            self.update(data)
+
+    def __str__(self):
+        return (
+            ("LONGTI: %5.2f LATI: %5.2f ALTI: %5.2f" % (self.longti, self.lati, self.alti)) +
+            (" ACC: %5.2f %5.2f %5.2f" % (self.acc_x, self.acc_y, self.acc_z)) +
+            "")
+
+    def update(self, data, count = 0):
+        self.log.debug('LogImuAtti: length=%d %s' % (len(data), byte_to_hexstring(data)))
+        self.count = count
+        self.longti = struct.unpack_from('d', data, 0)[0]
+        self.lati = struct.unpack_from('d', data, 8)[0]
+        self.alti = struct.unpack_from('d', data, 16)[0]
+        self.acc_x = struct.unpack_from('f', data, 20)[0]
+        self.acc_y = struct.unpack_from('f', data, 24)[0]
+        self.acc_z = struct.unpack_from('f', data, 28)[0]
+        self.log.debug('LogImuAtti: ' + str(self))
