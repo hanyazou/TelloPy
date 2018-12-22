@@ -5,27 +5,27 @@ from . import crc
 from . utils import *
 
 START_OF_PACKET                     = 0xcc
-WIFI_MSG                            = 0x1a
-VIDEO_RATE_QUERY                    = 40
-LIGHT_MSG                           = 53
-FLIGHT_MSG                          = 0x56
+WIFI_MSG                            = 0x001a
+VIDEO_RATE_QUERY                    = 0x0028
+LIGHT_MSG                           = 0x0035
+FLIGHT_MSG                          = 0x0056
 LOG_MSG                             = 0x1050
 
-VIDEO_ENCODER_RATE_CMD              = 0x20
-VIDEO_START_CMD                     = 0x25
+VIDEO_ENCODER_RATE_CMD              = 0x0020
+VIDEO_START_CMD                     = 0x0025
 VIDEO_MODE_CMD                      = 0x0031
-EXPOSURE_CMD                        = 0x34
-TIME_CMD                            = 70
-STICK_CMD                           = 80
+EXPOSURE_CMD                        = 0x0034
+TIME_CMD                            = 0x0046
+STICK_CMD                           = 0x0050
 TAKEOFF_CMD                         = 0x0054
 LAND_CMD                            = 0x0055
 FLIP_CMD                            = 0x005c
 PALM_LAND_CMD                       = 0x005e
 SET_ALT_LIMIT_CMD                   = 0x0058
-TAKE_PICTURE_COMMAND                = 48
-TELLO_CMD_FILE_SIZE                 = 98     # pt50
-TELLO_CMD_FILE_DATA                 = 99     # pt50
-TELLO_CMD_FILE_COMPLETE             = 100    # pt48
+TAKE_PICTURE_COMMAND                = 0x0030
+TELLO_CMD_FILE_SIZE                 = 0x0062  # pt50
+TELLO_CMD_FILE_DATA                 = 0x0063  # pt50
+TELLO_CMD_FILE_COMPLETE             = 0x0064  # pt48
 
 #Flip commands taken from Go version of code
 #FlipFront flips forward.
