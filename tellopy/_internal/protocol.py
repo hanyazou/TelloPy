@@ -4,25 +4,25 @@ from io import BytesIO
 from . import crc
 from . utils import *
 
-START_OF_PACKET = 0xcc
-WIFI_MSG = 0x1a
-VIDEO_RATE_QUERY = 40
-LIGHT_MSG = 53
-FLIGHT_MSG = 0x56
-LOG_MSG = 0x1050
+START_OF_PACKET                     = 0xcc
+WIFI_MSG                            = 0x1a
+VIDEO_RATE_QUERY                    = 40
+LIGHT_MSG                           = 53
+FLIGHT_MSG                          = 0x56
+LOG_MSG                             = 0x1050
 
-VIDEO_ENCODER_RATE_CMD = 0x20
-VIDEO_START_CMD = 0x25
-VIDEO_MODE_CMD = 0x0031
-EXPOSURE_CMD = 0x34
-TIME_CMD = 70
-STICK_CMD = 80
-TAKEOFF_CMD = 0x0054
-LAND_CMD = 0x0055
-FLIP_CMD = 0x005c
-PALM_LAND_CMD = 0x005e
-SET_ALT_LIMIT_CMD = 0x0058
-TAKE_PICTURE_COMMAND = 48
+VIDEO_ENCODER_RATE_CMD              = 0x20
+VIDEO_START_CMD                     = 0x25
+VIDEO_MODE_CMD                      = 0x0031
+EXPOSURE_CMD                        = 0x34
+TIME_CMD                            = 70
+STICK_CMD                           = 80
+TAKEOFF_CMD                         = 0x0054
+LAND_CMD                            = 0x0055
+FLIP_CMD                            = 0x005c
+PALM_LAND_CMD                       = 0x005e
+SET_ALT_LIMIT_CMD                   = 0x0058
+TAKE_PICTURE_COMMAND                = 48
 TELLO_CMD_FILE_SIZE                 = 98     # pt50
 TELLO_CMD_FILE_DATA                 = 99     # pt50
 TELLO_CMD_FILE_COMPLETE             = 100    # pt48
