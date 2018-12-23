@@ -55,10 +55,14 @@ $ python -m tellopy.examples.video_effect
 You can use PS3/PS4/XONE joystick to controll Tello.
 (see my video https://www.youtube.com/watch?v=MWdNFRdRuj8)
 ```
+$ pip install av
+$ pip install opencv-python
+$ pip install image
 $ pip install pygame
 $ python -m tellopy.examples.joystick_and_video
 
 ```
+![photo](files/joystick_and_video.png)
 
 ## Tellopy side projects
 
