@@ -13,6 +13,12 @@ import tellopy
 import pygame
 import pygame.locals
 from subprocess import Popen, PIPE
+import threading
+import av
+import cv2.cv2 as cv2  # for avoidance of pylint error
+import numpy
+import time
+import traceback
 
 
 class JoystickPS3:
@@ -171,7 +177,8 @@ class JoystickTARANIS:
 
 
 prev_flight_data = None
-video_player = None
+run_recv_thread = True
+new_image = None
 buttons = None
 speed = 100
 throttle = 0.0
@@ -181,20 +188,11 @@ roll = 0.0
 
 def handler(event, sender, data, **args):
     global prev_flight_data
-    global video_player
     drone = sender
     if event is drone.EVENT_FLIGHT_DATA:
         if prev_flight_data != str(data):
             print(data)
             prev_flight_data = str(data)
-    elif event is drone.EVENT_VIDEO_FRAME:
-        if video_player is None:
-            video_player = Popen(['mplayer', '-fps', '35', '-'], stdin=PIPE)
-        try:
-            video_player.stdin.write(data)
-        except IOError as err:
-            print(err)
-            video_player = None
     else:
         print('event="%s" data=%s' % (event.getname(), str(data)))
 
@@ -286,11 +284,40 @@ def handle_input_event(drone, e):
         elif e.button == buttons.LEFT:
             drone.left(0)
 
+def recv_thread(drone):
+    global run_recv_thread
+    global new_image
+    print('start recv_thread()')
+    try:
+        container = av.open(drone.get_video_stream())
+        # skip first 300 frames
+        frame_skip = 300
+        while True:
+            for frame in container.decode(video=0):
+                if 0 < frame_skip:
+                    frame_skip = frame_skip - 1
+                    continue
+                start_time = time.time()
+                image = cv2.cvtColor(numpy.array(frame.to_image()), cv2.COLOR_RGB2BGR)
+
+                new_image = image
+                if frame.time_base < 1.0/60:
+                    time_base = 1.0/60
+                else:
+                    time_base = frame.time_base
+                frame_skip = int((time.time() - start_time)/time_base)
+    except Exception as ex:
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
+        print(ex)
 
 def main():
     global buttons
+    global run_recv_thread
+    global new_image
     pygame.init()
     pygame.joystick.init()
+    current_image = None
 
     try:
         js = pygame.joystick.Joystick(0)
@@ -316,9 +343,8 @@ def main():
 
     drone = tellopy.Tello()
     drone.connect()
-    drone.start_video()
     drone.subscribe(drone.EVENT_FLIGHT_DATA, handler)
-    drone.subscribe(drone.EVENT_VIDEO_FRAME, handler)
+    threading.Thread(target=recv_thread, args=[drone]).start()
 
     try:
         while 1:
@@ -326,11 +352,19 @@ def main():
             time.sleep(0.01)
             for e in pygame.event.get():
                 handle_input_event(drone, e)
+            if current_image is not new_image:
+                cv2.imshow('Tello', new_image)
+                current_image = new_image
+                cv2.waitKey(1)
     except KeyboardInterrupt as e:
         print(e)
     except Exception as e:
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
         print(e)
 
+    run_recv_thread = False
+    cv2.destroyAllWindows()
     drone.quit()
     exit(1)
 
