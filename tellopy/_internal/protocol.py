@@ -264,15 +264,27 @@ class LogData(object):
     def __init__(self, log, data = None):
         self.log = log
         self.count = 0
-        self.new_mvo_feedback = LogNewMvoFeedback(log)
-        self.imu_atti = LogImuAtti(log)
+        self.mvo = LogNewMvoFeedback(log)
+        self.imu = LogImuAtti(log)
         if data:
             self.update(data)
 
     def __str__(self):
-        return (str(self.new_mvo_feedback) + ' | ' +
-                str(self.imu_atti) +
+        return ('MVO: ' + str(self.mvo) +
+                '|IMU: ' + str(self.imu) +
                 "")
+
+    def format_cvs(self):
+        return (
+            self.mvo.format_cvs() +
+            ',' + self.imu.format_cvs() +
+            "")
+
+    def format_cvs_header(self):
+        return (
+            self.mvo.format_cvs_header() +
+            ',' + self.imu.format_cvs_header() +
+            "")
 
     def update(self, data):
         if isinstance(data, bytearray):
@@ -280,12 +292,11 @@ class LogData(object):
 
         self.log.debug('LogData: data length=%d' % len(data))
         self.count += 1
-        pos = 1
+        pos = 0
         while (pos < len(data) - 2):
             if (struct.unpack_from('B', data, pos+0)[0] != 0x55):
-                self.log.error('LogData: corrupted data at pos=%d, data=%s'
+                raise Exception('LogData: corrupted data at pos=%d, data=%s'
                                % (pos, byte_to_hexstring(data[pos:])))
-                break
             length = struct.unpack_from('<h', data, pos+1)[0]
             checksum = data[pos+3]
             id = struct.unpack_from('<H', data, pos+4)[0]
@@ -298,15 +309,18 @@ class LogData(object):
             else:
                 payload = bytearray([x ^ xorval for x in data[pos+10:pos+10+length-12]])
             if id == self.ID_NEW_MVO_FEEDBACK:
-                self.new_mvo_feedback.update(payload, self.count)
+                self.mvo.update(payload, self.count)
             elif id == self.ID_IMU_ATTI:
-                self.imu_atti.update(payload, self.count)
+                self.imu.update(payload, self.count)
             else:
                 if not id in self.unknowns:
                     self.log.info('LogData: UNHANDLED LOG DATA: id=%5d, length=%4d' % (id, length-12))
                     self.unknowns.append(id)
 
             pos += length
+        if pos != len(data) - 2:
+            raise Exception('LogData: corrupted data at pos=%d, data=%s'
+                            % (pos, byte_to_hexstring(data[pos:])))
 
 
 class LogNewMvoFeedback(object):
@@ -328,15 +342,26 @@ class LogNewMvoFeedback(object):
             (" POS: %5.2f %5.2f %5.2f" % (self.pos_x, self.pos_y, self.pos_z))+
             "")
 
+    def format_cvs(self):
+        return (
+            ("%f,%f,%f" % (self.vel_x, self.vel_y, self.vel_z))+
+            (",%f,%f,%f" % (self.pos_x, self.pos_y, self.pos_z))+
+            "")
+
+    def format_cvs_header(self):
+        return (
+            "mvo.vel_x,mvo.vel_y,mvo.vel_z" + 
+            ",mvo.pos_x,mvo.pos_y,mvo.pos_z" +
+            "")
+
     def update(self, data, count = 0):
         self.log.debug('LogNewMvoFeedback: length=%d %s' % (len(data), byte_to_hexstring(data)))
         self.count = count
-        self.vel_x = struct.unpack_from('<h', data, 2)[0] / 100.0
-        self.vel_x = struct.unpack_from('<h', data, 4)[0] / 100.0
-        self.vel_x = struct.unpack_from('<h', data, 6)[0] / 100.0
-        self.pos_x = struct.unpack_from('f', data, 8)[0]
-        self.pos_y = struct.unpack_from('f', data, 12)[0]
-        self.pos_z = struct.unpack_from('f', data, 16)[0]
+        (self.vel_x, self.vel_y, self.vel_z) = struct.unpack_from('<hhh', data, 2)
+        self.vel_x /= 100.0
+        self.vel_y /= 100.0
+        self.vel_z /= 100.0
+        (self.pos_x, self.pos_y, self.pos_z) = struct.unpack_from('fff', data, 8)
         self.log.debug('LogNewMvoFeedback: ' + str(self))
 
 
@@ -344,28 +369,51 @@ class LogImuAtti(object):
     def __init__(self, log = None, data = None):
         self.log = log
         self.count = 0
-        self.longti = 0.0
-        self.lati = 0.0
-        self.alti = 0.0
         self.acc_x = 0.0
         self.acc_y = 0.0
         self.acc_z = 0.0
+        self.gyro_x = 0.0
+        self.gyro_y = 0.0
+        self.gyro_z = 0.0
+        self.q0 = 0.0
+        self.q1 = 0.0
+        self.q2 = 0.0
+        self.q3 = 0.0
+        self.vg_x = 0.0
+        self.vg_y = 0.0
+        self.vg_z = 0.0
         if (data != None):
             self.update(data)
 
     def __str__(self):
         return (
-            ("LONGTI: %5.2f LATI: %5.2f ALTI: %5.2f" % (self.longti, self.lati, self.alti)) +
-            (" ACC: %5.2f %5.2f %5.2f" % (self.acc_x, self.acc_y, self.acc_z)) +
+            ("ACC: %5.2f %5.2f %5.2f" % (self.acc_x, self.acc_y, self.acc_z)) +
+            (" GYRO: %5.2f %5.2f %5.2f" % (self.gyro_x, self.gyro_y, self.gyro_z)) +
+            (" QUATERNION: %5.2f %5.2f %5.2f %5.2f" % (self.q0, self.q1, self.q2, self.q3)) +
+            (" VG: %5.2f %5.2f %5.2f" % (self.vg_x, self.vg_y, self.vg_z)) +
+            "")
+
+    def format_cvs(self):
+        return (
+            ("%f,%f,%f" % (self.acc_x, self.acc_y, self.acc_z)) +
+            (",%f,%f,%f" % (self.gyro_x, self.gyro_y, self.gyro_z)) +
+            (",%f,%f,%f,%f" % (self.q0, self.q1, self.q2, self.q3)) +
+            (",%f,%f,%f" % (self.vg_x, self.vg_y, self.vg_z)) +
+            "")
+
+    def format_cvs_header(self):
+        return (
+            "imu.acc_x,imu.acc_y,imu.acc_z" +
+            ",imu.gyro_x,imu.gyro_y,imu.gyro_z" +
+            ",imu.q0,imu.q1,imu.q2, self.q3" +
+            ",imu.vg_x,imu.vg_y,imu.vg_z" +
             "")
 
     def update(self, data, count = 0):
         self.log.debug('LogImuAtti: length=%d %s' % (len(data), byte_to_hexstring(data)))
         self.count = count
-        self.longti = struct.unpack_from('d', data, 0)[0]
-        self.lati = struct.unpack_from('d', data, 8)[0]
-        self.alti = struct.unpack_from('d', data, 16)[0]
-        self.acc_x = struct.unpack_from('f', data, 20)[0]
-        self.acc_y = struct.unpack_from('f', data, 24)[0]
-        self.acc_z = struct.unpack_from('f', data, 28)[0]
+        (self.acc_x, self.acc_y, self.acc_z) = struct.unpack_from('fff', data, 20)
+        (self.gyro_x, self.gyro_y, self.gyro_z) = struct.unpack_from('fff', data, 32)
+        (self.q0, self.q1, self.q2, self.q3) = struct.unpack_from('ffff', data, 48)
+        (self.vg_x, self.vg_y, self.vg_z) = struct.unpack_from('fff', data, 76)
         self.log.debug('LogImuAtti: ' + str(self))

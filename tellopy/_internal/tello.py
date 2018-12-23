@@ -28,6 +28,7 @@ class Tello(object):
     EVENT_LOG = EVENT_LOG_HEADER
     EVENT_LOG_RAWDATA = event.Event('log_rawdata')
     EVENT_LOG_DATA = event.Event('log_data')
+    EVENT_LOG_CONFIG = event.Event('log_config')
     EVENT_TIME = event.Event('time')
     EVENT_VIDEO_FRAME = event.Event('video frame')
     EVENT_VIDEO_DATA = event.Event('video data')
@@ -83,7 +84,8 @@ class Tello(object):
         self.video_stream = None
         self.wifi_strength = 0
         self.log_data = LogData(log)
-        self.prev_log_data_time = None
+        self.log_data_file = None
+        self.log_data_header_recorded = False
 
         # video zoom state
         self.zoom = False
@@ -501,22 +503,23 @@ class Tello(object):
             log.debug("recv: log_header: %s" % byte_to_hexstring(data[9:]))
             self.__send_ack_log(id)
             self.__publish(event=self.EVENT_LOG_HEADER, data=data[9:])
+            if self.log_data_file and not self.log_data_header_recorded:
+                self.log_data_file.write(data[12:-2])
+                self.log_data_header_recorded = True
         elif cmd == LOG_DATA_MSG:
             log.debug("recv: log_data: length=%d, %s" % (len(data[9:]), byte_to_hexstring(data[9:])))
-            self.log_data.update(data[9:])
-            # show log data
-            now = datetime.datetime.now()
-            if self.prev_log_data_time is None:
-                self.prev_log_data_time = now
-            dur = (now - self.prev_log_data_time).total_seconds()
-            if 2.0 < dur:
-                log.info("log_data: %s" % self.log_data)
-                self.prev_log_data_time = now
             self.__publish(event=self.EVENT_LOG_RAWDATA, data=data[9:])
+            try:
+                self.log_data.update(data[10:])
+                if self.log_data_file:
+                    self.log_data_file.write(data[10:-2])
+            except Exception as ex:
+                log.error('%s' % str(ex))
             self.__publish(event=self.EVENT_LOG_DATA, data=self.log_data)
+
         elif cmd == LOG_CONFIG_MSG:
             log.debug("recv: log_config: length=%d, %s" % (len(data[9:]), byte_to_hexstring(data[9:])))
-            self.__publish(event=self.EVENT_LOG_DATA, data=data[9:])
+            self.__publish(event=self.EVENT_LOG_CONFIG, data=data[9:])
         elif cmd == WIFI_MSG:
             log.debug("recv: wifi: %s" % byte_to_hexstring(data[9:]))
             self.wifi_strength = data[9]
@@ -591,6 +594,14 @@ class Tello(object):
             # Inform subscribers that we have a file and clean up.
             self.__publish(event=self.EVENT_FILE_RECEIVED, data=file.data())
             del self.file_recv[filenum]
+
+    def record_log_data(self, path = None):
+        if path == None:
+            path = '%s/Documents/tello-%s.dat' % (
+                os.getenv('HOME'),
+                datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S'))
+        log.info('record log data in %s' % path)
+        self.log_data_file = open(path, 'wb')
 
     def __state_machine(self, event, sender, data, **args):
         self.lock.acquire()
