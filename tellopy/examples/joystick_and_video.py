@@ -179,6 +179,8 @@ class JoystickTARANIS:
 prev_flight_data = None
 run_recv_thread = True
 new_image = None
+flight_data = None
+log_data = None
 buttons = None
 speed = 100
 throttle = 0.0
@@ -188,11 +190,16 @@ roll = 0.0
 
 def handler(event, sender, data, **args):
     global prev_flight_data
+    global flight_data
+    global log_data
     drone = sender
     if event is drone.EVENT_FLIGHT_DATA:
         if prev_flight_data != str(data):
             print(data)
             prev_flight_data = str(data)
+        flight_data = data
+    elif event is drone.EVENT_LOG_DATA:
+        log_data = data
     else:
         print('event="%s" data=%s' % (event.getname(), str(data)))
 
@@ -284,9 +291,28 @@ def handle_input_event(drone, e):
         elif e.button == buttons.LEFT:
             drone.left(0)
 
+def draw_text(image, text, row):
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 0.5
+        font_size = 24
+        font_color = (255,255,255)
+        bg_color = (0,0,0)
+        d = 2
+        height, width = image.shape[:2]
+        left_mergin = 10
+        if row < 0:
+            pos =  (left_mergin, height + font_size * row + 1)
+        else:
+            pos =  (left_mergin, font_size * (row + 1))
+        cv2.putText(image, text, pos, font, font_scale, bg_color, 6)
+        cv2.putText(image, text, pos, font, font_scale, font_color, 1)
+
 def recv_thread(drone):
     global run_recv_thread
     global new_image
+    global flight_data
+    global log_data
+
     print('start recv_thread()')
     try:
         container = av.open(drone.get_video_stream())
@@ -300,6 +326,12 @@ def recv_thread(drone):
                 start_time = time.time()
                 image = cv2.cvtColor(numpy.array(frame.to_image()), cv2.COLOR_RGB2BGR)
 
+                if flight_data:
+                    draw_text(image, 'TelloPy: joystick_and_video ' + str(flight_data), 0)
+                if log_data:
+                    draw_text(image, 'MVO: ' + str(log_data.mvo), -3)
+                    draw_text(image, ('IMU: ' + str(log_data.imu))[0:52], -2)
+                    draw_text(image, '     ' + ('IMU: ' + str(log_data.imu))[52:], -1)
                 new_image = image
                 if frame.time_base < 1.0/60:
                     time_base = 1.0/60
@@ -344,6 +376,7 @@ def main():
     drone = tellopy.Tello()
     drone.connect()
     drone.subscribe(drone.EVENT_FLIGHT_DATA, handler)
+    drone.subscribe(drone.EVENT_LOG_DATA, handler)
     threading.Thread(target=recv_thread, args=[drone]).start()
 
     try:
