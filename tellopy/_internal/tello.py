@@ -365,7 +365,7 @@ class Tello(object):
         """flip_backleft tells the drone to perform a backwards right flip"""
         log.info('flip_backright (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
         pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipBackLeft)
+        pkt.add_byte(FlipBackRight)
         pkt.fixup()
         return self.send_packet(pkt)
 
