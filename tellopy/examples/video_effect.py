@@ -14,7 +14,16 @@ def main():
         drone.connect()
         drone.wait_for_connection(60.0)
 
-        container = av.open(drone.get_video_stream())
+        retry = 3
+        container = None
+        while container is None and 0 < retry:
+            retry -= 1
+            try:
+                container = av.open(drone.get_video_stream())
+            except av.AVError as ave:
+                print(ave)
+                print('retry...')
+
         # skip first 300 frames
         frame_skip = 300
         while True:
