@@ -683,7 +683,7 @@ class Tello(object):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         port = 6038
         sock.bind(('', port))
-        sock.settimeout(5.0)
+        sock.settimeout(1.0)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 512 * 1024)
         log.info('video receive buffer size = %d' %
                  sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF))
@@ -756,6 +756,7 @@ class Tello(object):
 
             except socket.timeout as ex:
                 log.error('video recv: timeout')
+                self.start_video()
                 data = None
             except Exception as ex:
                 log.error('video recv: %s' % str(ex))
