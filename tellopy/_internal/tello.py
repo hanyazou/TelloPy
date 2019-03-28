@@ -172,6 +172,14 @@ class Tello(object):
         pkt.fixup()
         return self.send_packet(pkt)
 
+    def throw_and_go(self):
+        """Throw_and_go starts a throw and go sequence"""
+        log.info('throw_and_go (cmd=0x%02x seq=0x%04x)' % (THROW_AND_GO_CMD, self.pkt_seq_num))
+        pkt = Packet(THROW_AND_GO_CMD, 0x48)
+        pkt.add_byte(0x00)
+        pkt.fixup()
+        return self.send_packet(pkt)
+
     def land(self):
         """Land tells the drone to come in for landing."""
         log.info('land (cmd=0x%02x seq=0x%04x)' % (LAND_CMD, self.pkt_seq_num))
@@ -536,7 +544,7 @@ class Tello(object):
             log.debug("recv: time data: %s" % byte_to_hexstring(data))
             self.__publish(event=self.EVENT_TIME, data=data[7:9])
         elif cmd in (TAKEOFF_CMD, LAND_CMD, VIDEO_START_CMD, VIDEO_ENCODER_RATE_CMD, PALM_LAND_CMD,
-                     EXPOSURE_CMD):
+                     EXPOSURE_CMD, THROW_AND_GO_CMD):
             log.info("recv: ack: cmd=0x%02x seq=0x%04x %s" %
                      (uint16(data[5], data[6]), uint16(data[7], data[8]), byte_to_hexstring(data)))
         elif cmd == TELLO_CMD_FILE_SIZE:
