@@ -22,6 +22,7 @@ LAND_CMD                            = 0x0055
 FLIGHT_MSG                          = 0x0056
 SET_ALT_LIMIT_CMD                   = 0x0058
 FLIP_CMD                            = 0x005c
+THROW_AND_GO_CMD                    = 0x005d
 PALM_LAND_CMD                       = 0x005e
 TELLO_CMD_FILE_SIZE                 = 0x0062  # pt50
 TELLO_CMD_FILE_DATA                 = 0x0063  # pt50
