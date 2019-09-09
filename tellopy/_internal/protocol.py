@@ -22,6 +22,7 @@ LAND_CMD                            = 0x0055
 FLIGHT_MSG                          = 0x0056
 SET_ALT_LIMIT_CMD                   = 0x0058
 FLIP_CMD                            = 0x005c
+FLATTRIM_CMD                        = 0x1054
 THROW_AND_GO_CMD                    = 0x005d
 PALM_LAND_CMD                       = 0x005e
 TELLO_CMD_FILE_SIZE                 = 0x0062  # pt50
@@ -30,6 +31,19 @@ TELLO_CMD_FILE_COMPLETE             = 0x0064  # pt48
 LOG_HEADER_MSG                      = 0x1050
 LOG_DATA_MSG                        = 0x1051
 LOG_CONFIG_MSG                      = 0x1052
+TELLO_SDK_CMD                       = 'command'
+STREAM_ON_CMD                       = 'streamon'
+EMERGENCY_CMD                       = 'emergency'
+
+FLIP_FRONT = 0
+FLIP_LEFT = 1
+FLIP_BACK = 2
+FLIP_RIGHT = 3
+FLIP_FRONT_LEFT = 4
+FLIP_BACK_LEFT = 5
+FLIP_BACK_RIGHT = 6
+FLIP_FRONT_RIGHT = 7
+FLIP_MAX_INT = 8
 
 #Flip commands taken from Go version of code
 #FlipFront flips forward.
@@ -294,6 +308,23 @@ class LogData(object):
         self.log.debug('LogData: data length=%d' % len(data))
         self.count += 1
         pos = 0
+        
+        if ''.join(data)[:3] == 'mid':
+            data = data.split(';')
+            self.mvo.vel_x = float(data[8].split(':')[1])/10
+            self.mvo.vel_y = float(data[9].split(':')[1])/10
+            self.mvo.vel_z = float(data[10].split(':')[1])/10
+            self.mvo.pos_z = -float(data[13].split(':')[1])/100
+            
+            self.imu.gyro_x = float(data[5].split(':')[1])
+            self.imu.gyro_y = float(data[6].split(':')[1])
+            self.imu.gyro_z = float(data[7].split(':')[1])
+            self.imu.acc_x = float(data[18].split(':')[1])
+            self.imu.acc_y = float(data[19].split(':')[1])
+            self.imu.acc_z = float(data[20].split(':')[1])
+            self.log.debug('LogData: ' + str(self))
+            return 
+            
         while (pos < len(data) - 2):
             if (struct.unpack_from('B', data, pos+0)[0] != 0x55):
                 raise Exception('LogData: corrupted data at pos=%d, data=%s'
@@ -359,9 +390,9 @@ class LogNewMvoFeedback(object):
         self.log.debug('LogNewMvoFeedback: length=%d %s' % (len(data), byte_to_hexstring(data)))
         self.count = count
         (self.vel_x, self.vel_y, self.vel_z) = struct.unpack_from('<hhh', data, 2)
-        self.vel_x /= 100.0
-        self.vel_y /= 100.0
-        self.vel_z /= 100.0
+        self.vel_x /= 1000.0
+        self.vel_y /= 1000.0
+        self.vel_z /= 1000.0
         (self.pos_x, self.pos_y, self.pos_z) = struct.unpack_from('fff', data, 8)
         self.log.debug('LogNewMvoFeedback: ' + str(self))
 

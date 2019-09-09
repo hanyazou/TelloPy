@@ -8,7 +8,7 @@ LOG_DEBUG = 3
 LOG_ALL = 99
 
 
-class Logger:
+class Logger(object):
     def __init__(self, header=''):
         self.log_level = LOG_INFO
         self.header_string = header
