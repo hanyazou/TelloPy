@@ -5,7 +5,20 @@ extern "C" {
 #include <libswscale/swscale.h>
 }
 
+#ifndef PIX_FMT_RGB24
+#define PIX_FMT_RGB24 AV_PIX_FMT_RGB24
+#endif
+
+#ifndef CODEC_CAP_TRUNCATED
+#define CODEC_CAP_TRUNCATED AV_CODEC_CAP_TRUNCATED
+#endif
+
+#ifndef CODEC_FLAG_TRUNCATED
+#define CODEC_FLAG_TRUNCATED AV_CODEC_FLAG_TRUNCATED
+#endif
+
 #include "h264decoder.hpp"
+#include <utility>
 
 typedef unsigned char ubyte;
 
