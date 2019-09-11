@@ -1,0 +1,59 @@
+# Other stuff
+.svn
+*.kdev4
+*~
+build
+buildopt
+trash
+.spyderworkspace
+.spyderproject
+*.kate-swp
+*.swp # create by vim
+*.log
+
+#CMake stuff
+CMakeCache.txt
+CMakeFiles
+Makefile
+cmake_install.cmake
+install_manifest.txt
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+
+
+# Sphinx documentation
+docs/_build/
+
+# PyBuilder
+target/
+
+# Compiled Object files
+*.slo
+*.lo
+*.o
+*.obj
+
+# Precompiled Headers
+*.gch
+*.pch
+
+# Compiled Dynamic libraries
+*.so
+*.dylib
+*.dll
+
+# Fortran module files
+*.mod
+
+# Compiled Static libraries
+*.lai
+*.la
+*.a
+*.lib
+
+# Executables
+*.exe
+*.out
+*.app
