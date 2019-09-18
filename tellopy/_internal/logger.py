@@ -8,7 +8,7 @@ LOG_DEBUG = 3
 LOG_ALL = 99
 
 
-class Logger:
+class Logger(object): #Object inheritence for child 'RospyLogger' (Jordy)
     def __init__(self, header=''):
         self.log_level = LOG_INFO
         self.header_string = header
