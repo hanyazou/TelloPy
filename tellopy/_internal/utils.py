@@ -1,6 +1,6 @@
 import sys
 import traceback
-
+import struct
 
 def byte(c):
     if isinstance(c, str):
@@ -29,6 +29,8 @@ def byte_to_hexstring(buf):
 
     return ''.join(["%02x " % ord(chr(x)) for x in buf]).strip()
 
+def float_to_hex(f):
+    return hex(struct.unpack('<I', struct.pack('<f', f))[0])
 
 def show_exception(ex):
     exc_type, exc_value, exc_traceback = sys.exc_info()

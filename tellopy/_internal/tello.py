@@ -201,6 +201,61 @@ class Tello(object):
         log.info('quit')
         self.__publish(event=self.__EVENT_QUIT_REQ)
 
+    def get_alt_limit(self):
+        ''' ... '''
+        self.log.debug('get altitude limit (cmd=0x%02x seq=0x%04x)' % (
+            ALT_LIMIT_MSG, self.pkt_seq_num))
+        pkt = Packet(ALT_LIMIT_MSG)
+        pkt.fixup()
+        return self.send_packet(pkt)
+        
+    def set_alt_limit(self, limit):
+        self.log.info('set altitude limit=%s (cmd=0x%02x seq=0x%04x)' % (
+            int(limit), SET_ALT_LIMIT_CMD, self.pkt_seq_num))
+        pkt = Packet(SET_ALT_LIMIT_CMD)
+        pkt.add_byte(int(limit))
+        pkt.add_byte(0x00)
+        pkt.fixup()        
+        self.send_packet(pkt)
+        self.get_alt_limit()
+
+    def get_att_limit(self):
+        ''' ... '''
+        self.log.debug('get attitude limit (cmd=0x%02x seq=0x%04x)' % (
+            ATT_LIMIT_MSG, self.pkt_seq_num))
+        pkt = Packet(ATT_LIMIT_MSG)
+        pkt.fixup()
+        return self.send_packet(pkt)
+        
+    def set_att_limit(self, limit):
+        self.log.info('set attitude limit=%s (cmd=0x%02x seq=0x%04x)' % (
+            int(limit), ATT_LIMIT_CMD, self.pkt_seq_num))
+        pkt = Packet(ATT_LIMIT_CMD)
+        pkt.add_byte(0x00)        
+        pkt.add_byte(0x00)
+        pkt.add_byte( int(float_to_hex(float(limit))[4:6], 16) ) # 'attitude limit' formatted in float of 4 bytes
+        pkt.add_byte(0x41)
+        pkt.fixup()
+        self.send_packet(pkt)
+        self.get_att_limit()
+
+    def get_low_bat_threshold(self):
+        ''' ... '''
+        self.log.debug('get low battery threshold (cmd=0x%02x seq=0x%04x)' % (
+            LOW_BAT_THRESHOLD_MSG, self.pkt_seq_num))
+        pkt = Packet(LOW_BAT_THRESHOLD_MSG)
+        pkt.fixup()
+        return self.send_packet(pkt)
+        
+    def set_low_bat_threshold(self, threshold):
+        self.log.info('set low battery threshold=%s (cmd=0x%02x seq=0x%04x)' % (
+            int(threshold), LOW_BAT_THRESHOLD_CMD, self.pkt_seq_num))
+        pkt = Packet(LOW_BAT_THRESHOLD_CMD)
+        pkt.add_byte(int(threshold))
+        pkt.fixup()        
+        self.send_packet(pkt)
+        self.get_low_bat_threshold()
+
     def __send_time_command(self):
         log.info('send_time (cmd=0x%02x seq=0x%04x)' % (TIME_CMD, self.pkt_seq_num))
         pkt = Packet(TIME_CMD, 0x50)
@@ -532,8 +587,14 @@ class Tello(object):
             log.debug("recv: wifi: %s" % byte_to_hexstring(data[9:]))
             self.wifi_strength = data[9]
             self.__publish(event=self.EVENT_WIFI, data=data[9:])
+        elif cmd == ALT_LIMIT_MSG:
+            log.info("recv: altitude limit: %s" % byte_to_hexstring(data[9:-2]))
+        elif cmd == ATT_LIMIT_MSG:
+            log.info("recv: attitude limit: %s" % byte_to_hexstring(data[9:-2]))
+        elif cmd == LOW_BAT_THRESHOLD_MSG:
+            log.info("recv: low battery threshold: %s" % byte_to_hexstring(data[9:-2]))
         elif cmd == LIGHT_MSG:
-            log.debug("recv: light: %s" % byte_to_hexstring(data[9:]))
+            log.debug("recv: light: %s" % byte_to_hexstring(data[9:-2]))
             self.__publish(event=self.EVENT_LIGHT, data=data[9:])
         elif cmd == FLIGHT_MSG:
             flight_data = FlightData(data[9:])
@@ -543,9 +604,9 @@ class Tello(object):
         elif cmd == TIME_CMD:
             log.debug("recv: time data: %s" % byte_to_hexstring(data))
             self.__publish(event=self.EVENT_TIME, data=data[7:9])
-        elif cmd in (TAKEOFF_CMD, LAND_CMD, VIDEO_START_CMD, VIDEO_ENCODER_RATE_CMD, PALM_LAND_CMD,
-                     EXPOSURE_CMD, THROW_AND_GO_CMD):
-            log.info("recv: ack: cmd=0x%02x seq=0x%04x %s" %
+        elif cmd in (SET_ALT_LIMIT_CMD, ATT_LIMIT_CMD, LOW_BAT_THRESHOLD_CMD, TAKEOFF_CMD, LAND_CMD, VIDEO_START_CMD, VIDEO_ENCODER_RATE_CMD, PALM_LAND_CMD,
+                     EXPOSURE_CMD, THROW_AND_GO_CMD, EMERGENCY_CMD):
+            log.debug("recv: ack: cmd=0x%02x seq=0x%04x %s" %
                      (uint16(data[5], data[6]), uint16(data[7], data[8]), byte_to_hexstring(data)))
         elif cmd == TELLO_CMD_FILE_SIZE:
             # Drone is about to send us a file. Get ready.
