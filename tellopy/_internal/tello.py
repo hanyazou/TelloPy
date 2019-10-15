@@ -423,7 +423,7 @@ class Tello(object):
             log.info('set_roll(val=%4.2f)' % roll)
         self.right_x = self.__fix_range(roll)
 
-    def set_fast_mode(self):
+    def toggle_fast_mode(self):
         if self.fast_mode:
             self.fast_mode = False
         elif not self.fast_mode:
