@@ -173,6 +173,66 @@ class JoystickXONE:
     RIGHT_Y_REVERSE = -1.0
     DEADZONE = 0.09
 
+class JoystickXONES:
+    # d-pad
+    UP = 0  # UP
+    DOWN = 1  # DOWN
+    ROTATE_LEFT = 2  # LEFT
+    ROTATE_RIGHT = 3  # RIGHT
+
+    # bumper triggers
+    TAKEOFF = 5  # RB
+    LAND = 4  # LB
+    # UNUSED = 7 #RT
+    # UNUSED = 6 #LT
+
+    # buttons
+    FORWARD = 3  # Y
+    BACKWARD = 0  # A
+    LEFT = 2  # X
+    RIGHT = 1  # B
+
+    # axis
+    LEFT_X = 0
+    LEFT_Y = 1
+    RIGHT_X = 2
+    RIGHT_Y = 3
+    LEFT_X_REVERSE = 1.0
+    LEFT_Y_REVERSE = -1.0
+    RIGHT_X_REVERSE = 1.0
+    RIGHT_Y_REVERSE = -1.0
+    DEADZONE = 0.09
+
+class JoystickXONES_WIRELESS:
+    # d-pad
+    UP = 0  # UP
+    DOWN = 1  # DOWN
+    ROTATE_LEFT = 2  # LEFT
+    ROTATE_RIGHT = 3  # RIGHT
+
+    # bumper triggers
+    TAKEOFF = 7  # RB
+    LAND = 6  # LB
+    # UNUSED = 7 #RT
+    # UNUSED = 6 #LT
+
+    # buttons
+    FORWARD = 3  # Y
+    BACKWARD = 0  # A
+    LEFT = 2  # X
+    RIGHT = 1  # B
+
+    # axis
+    LEFT_X = 0
+    LEFT_Y = 1
+    RIGHT_X = 2
+    RIGHT_Y = 3
+    LEFT_X_REVERSE = 1.0
+    LEFT_Y_REVERSE = -1.0
+    RIGHT_X_REVERSE = 1.0
+    RIGHT_Y_REVERSE = -1.0
+    DEADZONE = 0.09
+
 
 class JoystickTARANIS:
     # d-pad
@@ -395,6 +455,10 @@ def main():
             buttons = JoystickF310
         elif js_name == 'Xbox One Wired Controller':
             buttons = JoystickXONE
+        elif js_name == 'Microsoft X-Box One S pad':
+            buttons = JoystickXONES
+        elif js_name == 'Xbox Wireless Controller':
+            buttons = JoystickXONES_WIRELESS
         elif js_name == 'FrSky Taranis Joystick':
             buttons = JoystickTARANIS
     except pygame.error:
