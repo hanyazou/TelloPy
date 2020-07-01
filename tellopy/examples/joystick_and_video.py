@@ -143,6 +143,36 @@ class JoystickF310:
     RIGHT_Y_REVERSE = -1.0
     DEADZONE = 0.08
 
+class JoystickDualAction:
+    # d-pad
+    UP = -1  # UP
+    DOWN = -1  # DOWN
+    ROTATE_LEFT = -1  # LEFT
+    ROTATE_RIGHT = -1  # RIGHT
+
+    # bumper triggers
+    LAND = 4  # L1
+    TAKEOFF = 5  # R1
+    # UNUSED = 6 #L2
+    # UNUSED = 7 #R2
+
+    # buttons
+    LEFT = 0  # X
+    BACKWARD = 1  # A
+    RIGHT = 2  # B
+    FORWARD = 3  # Y
+
+    # axis
+    LEFT_X = 0
+    LEFT_Y = 1
+    RIGHT_X = 2
+    RIGHT_Y = 3
+    LEFT_X_REVERSE = 1.0
+    LEFT_Y_REVERSE = -1.0
+    RIGHT_X_REVERSE = 1.0
+    RIGHT_Y_REVERSE = -1.0
+    DEADZONE = 0.08
+
 class JoystickXONE:
     # d-pad
     UP = 0  # UP
@@ -453,6 +483,8 @@ def main():
             buttons = JoystickPS3
         elif js_name in ('Logitech Gamepad F310'):
             buttons = JoystickF310
+        elif js_name == 'Logitech Dual Action':
+            buttons = JoystickDualAction
         elif js_name == 'Xbox One Wired Controller':
             buttons = JoystickXONE
         elif js_name == 'Microsoft X-Box One S pad':
