@@ -143,6 +143,11 @@ class JoystickF310:
     RIGHT_Y_REVERSE = -1.0
     DEADZONE = 0.08
 
+# Hold down the Logitech button in the center of the controller while plugging
+# in the USB cord. In order for the controller to use this mapping, the switch
+# on the back must be in the "D" position and the Mode light must be off. It is
+# off by default, so once the controller is connected, switch it on, then off.
+# Note that the D-pad transmits JOYHATMOTION events in this mode.
 class JoystickDualAction:
     # d-pad
     UP = -1  # UP
@@ -161,6 +166,10 @@ class JoystickDualAction:
     BACKWARD = 1  # A
     RIGHT = 2  # B
     FORWARD = 3  # Y
+    # UNUSED = 8 #BACK
+    # UNUSED = 9 #START
+    # UNUSED = 10 #L_JOY
+    # UNUSED = 11 #R_JOY
 
     # axis
     LEFT_X = 0
