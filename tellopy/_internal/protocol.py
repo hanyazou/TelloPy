@@ -1,5 +1,6 @@
 import datetime
 import struct
+import math
 from io import BytesIO
 
 from . import crc
@@ -377,7 +378,7 @@ class LogNewMvoFeedback(object):
 
     def format_cvs_header(self):
         return (
-            "mvo.vel_x,mvo.vel_y,mvo.vel_z" + 
+            "mvo.vel_x,mvo.vel_y,mvo.vel_z" +
             ",mvo.pos_x,mvo.pos_y,mvo.pos_z" +
             "")
 
@@ -406,6 +407,7 @@ class LogImuAtti(object):
         self.q1 = 0.0
         self.q2 = 0.0
         self.q3 = 0.0
+        self.yaw = 0.0
         self.vg_x = 0.0
         self.vg_y = 0.0
         self.vg_z = 0.0
@@ -436,6 +438,13 @@ class LogImuAtti(object):
             ",imu.vg_x,imu.vg_y,imu.vg_z" +
             "")
 
+    def quaternion_to_yaw_degree(self, qw, qx, qy, qz):
+        degree = math.pi / 180.0
+        sin_y = 2.0 * (qw * qz + qx * qy)
+        cos_y = 1.0 - 2 * (qy * qy + qz * qz)
+        yaw = round(math.atan2(sin_y, cos_y) / degree, 2)
+        return yaw
+
     def update(self, data, count = 0):
         self.log.debug('LogImuAtti: length=%d %s' % (len(data), byte_to_hexstring(data)))
         self.count = count
@@ -443,4 +452,5 @@ class LogImuAtti(object):
         (self.gyro_x, self.gyro_y, self.gyro_z) = struct.unpack_from('fff', data, 32)
         (self.q0, self.q1, self.q2, self.q3) = struct.unpack_from('ffff', data, 48)
         (self.vg_x, self.vg_y, self.vg_z) = struct.unpack_from('fff', data, 76)
+        self.yaw = self.quaternion_to_yaw_degree(self.q0, self.q1, self.q2, self.q3)
         self.log.debug('LogImuAtti: ' + str(self))
