@@ -34,12 +34,12 @@ Help on package tellopy:
 You can find basic usage of this package in example code in the examples folder.
 
 ### Mplayer
-The examples assume that you have mplayer installed and configured in your path.
+The video examples assume that you have mplayer installed and configured in your path.
 
 #### Windows
 Download Mplayer for Windows from [SourceForge](https://sourceforge.net/projects/mplayerwin/files/MPlayer-MEncoder/r38151/mplayer-svn-38151-x86_64.7z/download).
 
-Unzip the file via [7zip](https://www.7-zip.org/), and the extracted folder to your PATH (see [here for env help](https://www.architectryan.com/2018/03/17/add-to-the-path-on-windows-10/)).
+Unzip the file via [7zip](https://www.7-zip.org/), and add the extracted folder to your PATH (see [here for env help](https://www.architectryan.com/2018/03/17/add-to-the-path-on-windows-10/)).
 
 #### Linux
 `$ sudo apt install mplayer mplayer-gui`
