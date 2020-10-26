@@ -28,7 +28,6 @@ import pygame.font
 import os
 import datetime
 from subprocess import Popen, PIPE
-from platform import system
 
 
 prev_flight_data = None
