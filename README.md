@@ -31,14 +31,37 @@ Help on package tellopy:
 ```
 
 ## Examples
-
 You can find basic usage of this package in example code in the examples folder.
+
+### Mplayer
+The examples assume that you have mplayer installed and configured in your path.
+
+#### Windows
+Download Mplayer for Windows from [SourceForge](https://sourceforge.net/projects/mplayerwin/files/MPlayer-MEncoder/r38151/mplayer-svn-38151-x86_64.7z/download).
+
+Unzip the file via [7zip](https://www.7-zip.org/), and the extracted folder to your PATH (see [here for env help](https://www.architectryan.com/2018/03/17/add-to-the-path-on-windows-10/)).
+
+#### Linux
+`$ sudo apt install mplayer mplayer-gui`
+
+#### Mac
+`$ brew install mplayer`
 
 ### simple_takeoff
 This example let Tello take off. Tello will land automatically after a few seconds.
 
 ```
 $ python -m tellopy.examples.simple_takeoff
+```
+
+### keyboard_and_video
+Display the realtime video stream from Tello.
+```
+$ pip install av
+$ pip install opencv-python
+$ pip install image
+$ pip install pygame
+$ python -m tellopy.examples.keyboard_and_video
 ```
 
 ### video_effect
