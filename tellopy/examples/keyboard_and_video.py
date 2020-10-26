@@ -19,7 +19,6 @@ Controls:
 """
 
 import time
-import sys
 import tellopy
 import pygame
 import pygame.display
@@ -29,9 +28,7 @@ import pygame.font
 import os
 import datetime
 from subprocess import Popen, PIPE
-# from tellopy import logger
 
-# log = tellopy.logger.Logger('TelloUI')
 
 prev_flight_data = None
 video_player = None
@@ -39,6 +36,13 @@ video_recorder = None
 font = None
 wid = None
 date_fmt = '%Y-%m-%d_%H%M%S'
+
+
+def get_file_path(file):
+    if system() == 'Windows':
+        return os.path.join(os.environ['USERPROFILE'] + "\\Pictures", file)
+    else:
+        return os.path.join(os.environ['HOME'] + "/Pictures", file)
 
 def toggle_recording(drone, speed):
     global video_recorder
@@ -54,8 +58,9 @@ def toggle_recording(drone, speed):
         return
 
     # start a new recording
-    filename = '%s/Pictures/tello-%s.mp4' % (os.getenv('HOME'),
-                                             datetime.datetime.now().strftime(date_fmt))
+    filename = 'tello-{}.mp4'.format (datetime.datetime.now().strftime(date_fmt))
+    filename = get_file_path(filename)
+
     video_recorder = Popen([
         'mencoder', '-', '-vc', 'x264', '-fps', '30', '-ovc', 'copy',
         '-of', 'lavf', '-lavfopts', 'format=mp4',
@@ -206,9 +211,9 @@ def videoFrameHandler(event, sender, data):
 def handleFileReceived(event, sender, data):
     global date_fmt
     # Create a file in ~/Pictures/ to receive image data from the drone.
-    path = '%s/Pictures/tello-%s.jpeg' % (
-        os.getenv('HOME'),
-        datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S'))
+    file = 'tello-{}.jpeg'.format(datetime.datetime.now().strftime('%Y-%m-%d_%H%M%S'))
+
+    path = get_file_path(file)
     with open(path, 'wb') as fd:
         fd.write(data)
     status_print('Saved photo to %s' % path)
