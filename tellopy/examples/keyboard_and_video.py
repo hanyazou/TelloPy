@@ -35,7 +35,6 @@ import av
 import cv2
 import numpy
 from subprocess import Popen, PIPE
-from platform import system
 
 prev_flight_data = None
 flight_data = None
