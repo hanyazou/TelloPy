@@ -198,6 +198,14 @@ class Tello(object):
         pkt.add_byte(0x00)
         pkt.fixup()
         return self.send_packet(pkt)
+    
+    def emergency(self):
+        """Stop all four motors instantly"""
+        log.info('emergency')
+        pkt = Packet(EMERGENCY_CMD)
+        pkt.add_byte(0x00)
+        pkt.fixup()
+        return self.send_packet(pkt)
 
     def quit(self):
         """Quit stops the internal threads."""
