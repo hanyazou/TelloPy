@@ -136,6 +136,7 @@ class Tello(object):
     def connect(self):
         """Connect is used to send the initial connection request to the drone."""
         self.__publish(event=self.__EVENT_CONN_REQ)
+        self.wait_for_connection(10.0)
 
     def wait_for_connection(self, timeout=None):
         """Wait_for_connection will block until the connection is established."""
