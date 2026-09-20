@@ -291,6 +291,7 @@ class LogData(object):
     def __init__(self, log, data = None):
         self.log = log
         self.count = 0
+        self.recv_time = 0.0
         self.mvo = LogNewMvoFeedback(log)
         self.imu = LogImuAtti(log)
         if data:
@@ -303,20 +304,24 @@ class LogData(object):
 
     def format_cvs(self):
         return (
-            self.mvo.format_cvs() +
+            ("%.6f" % self.recv_time) +
+            ',' + self.mvo.format_cvs() +
             ',' + self.imu.format_cvs() +
             "")
 
     def format_cvs_header(self):
         return (
-            self.mvo.format_cvs_header() +
+            "recv_time" +
+            ',' + self.mvo.format_cvs_header() +
             ',' + self.imu.format_cvs_header() +
             "")
 
-    def update(self, data):
+    def update(self, data, recv_time=None):
         if isinstance(data, bytearray):
             data = str(data)
 
+        if recv_time is not None:
+            self.recv_time = recv_time
         self.log.debug('LogData: data length=%d' % len(data))
         self.count += 1
         pos = 0
@@ -330,15 +335,16 @@ class LogData(object):
             # 4bytes data[6:9] is tick
             # last 2 bytes are CRC
             # length-12 is the byte length of payload
+            tick = struct.unpack_from('<I', data, pos+6)[0]
             xorval = data[pos+6]
             if isinstance(data, str):
                 payload = bytearray([ord(x) ^ ord(xorval) for x in data[pos+10:pos+10+length-12]])
             else:
                 payload = bytearray([x ^ xorval for x in data[pos+10:pos+10+length-12]])
             if id == self.ID_NEW_MVO_FEEDBACK:
-                self.mvo.update(payload, self.count)
+                self.mvo.update(payload, self.count, tick)
             elif id == self.ID_IMU_ATTI:
-                self.imu.update(payload, self.count)
+                self.imu.update(payload, self.count, tick)
             else:
                 if not id in self.unknowns:
                     self.log.info('LogData: UNHANDLED LOG DATA: id=%5d, length=%4d' % (id, length-12))
@@ -354,6 +360,7 @@ class LogNewMvoFeedback(object):
     def __init__(self, log = None, data = None):
         self.log = log
         self.count = 0
+        self.tick = 0
         self.vel_x = 0.0
         self.vel_y = 0.0
         self.vel_z = 0.0
@@ -365,25 +372,29 @@ class LogNewMvoFeedback(object):
 
     def __str__(self):
         return (
-            ("VEL: %5.2f %5.2f %5.2f" % (self.vel_x, self.vel_y, self.vel_z))+
+            ("TICK: %d" % self.tick) +
+            (" VEL: %5.2f %5.2f %5.2f" % (self.vel_x, self.vel_y, self.vel_z))+
             (" POS: %5.2f %5.2f %5.2f" % (self.pos_x, self.pos_y, self.pos_z))+
             "")
 
     def format_cvs(self):
         return (
-            ("%f,%f,%f" % (self.vel_x, self.vel_y, self.vel_z))+
+            ("%d" % self.tick) +
+            (",%f,%f,%f" % (self.vel_x, self.vel_y, self.vel_z))+
             (",%f,%f,%f" % (self.pos_x, self.pos_y, self.pos_z))+
             "")
 
     def format_cvs_header(self):
         return (
-            "mvo.vel_x,mvo.vel_y,mvo.vel_z" + 
+            "mvo.tick" +
+            ",mvo.vel_x,mvo.vel_y,mvo.vel_z" +
             ",mvo.pos_x,mvo.pos_y,mvo.pos_z" +
             "")
 
-    def update(self, data, count = 0):
+    def update(self, data, count = 0, tick = 0):
         self.log.debug('LogNewMvoFeedback: length=%d %s' % (len(data), byte_to_hexstring(data)))
         self.count = count
+        self.tick = tick
         (self.vel_x, self.vel_y, self.vel_z) = struct.unpack_from('<hhh', data, 2)
         self.vel_x /= 100.0
         self.vel_y /= 100.0
@@ -396,6 +407,7 @@ class LogImuAtti(object):
     def __init__(self, log = None, data = None):
         self.log = log
         self.count = 0
+        self.tick = 0
         self.acc_x = 0.0
         self.acc_y = 0.0
         self.acc_z = 0.0
@@ -414,7 +426,8 @@ class LogImuAtti(object):
 
     def __str__(self):
         return (
-            ("ACC: %5.2f %5.2f %5.2f" % (self.acc_x, self.acc_y, self.acc_z)) +
+            ("TICK: %d" % self.tick) +
+            (" ACC: %5.2f %5.2f %5.2f" % (self.acc_x, self.acc_y, self.acc_z)) +
             (" GYRO: %5.2f %5.2f %5.2f" % (self.gyro_x, self.gyro_y, self.gyro_z)) +
             (" QUATERNION: %5.2f %5.2f %5.2f %5.2f" % (self.q0, self.q1, self.q2, self.q3)) +
             (" VG: %5.2f %5.2f %5.2f" % (self.vg_x, self.vg_y, self.vg_z)) +
@@ -422,7 +435,8 @@ class LogImuAtti(object):
 
     def format_cvs(self):
         return (
-            ("%f,%f,%f" % (self.acc_x, self.acc_y, self.acc_z)) +
+            ("%d" % self.tick) +
+            (",%f,%f,%f" % (self.acc_x, self.acc_y, self.acc_z)) +
             (",%f,%f,%f" % (self.gyro_x, self.gyro_y, self.gyro_z)) +
             (",%f,%f,%f,%f" % (self.q0, self.q1, self.q2, self.q3)) +
             (",%f,%f,%f" % (self.vg_x, self.vg_y, self.vg_z)) +
@@ -430,15 +444,17 @@ class LogImuAtti(object):
 
     def format_cvs_header(self):
         return (
-            "imu.acc_x,imu.acc_y,imu.acc_z" +
+            "imu.tick" +
+            ",imu.acc_x,imu.acc_y,imu.acc_z" +
             ",imu.gyro_x,imu.gyro_y,imu.gyro_z" +
             ",imu.q0,imu.q1,imu.q2, self.q3" +
             ",imu.vg_x,imu.vg_y,imu.vg_z" +
             "")
 
-    def update(self, data, count = 0):
+    def update(self, data, count = 0, tick = 0):
         self.log.debug('LogImuAtti: length=%d %s' % (len(data), byte_to_hexstring(data)))
         self.count = count
+        self.tick = tick
         (self.acc_x, self.acc_y, self.acc_z) = struct.unpack_from('fff', data, 20)
         (self.gyro_x, self.gyro_y, self.gyro_z) = struct.unpack_from('fff', data, 32)
         (self.q0, self.q1, self.q2, self.q3) = struct.unpack_from('ffff', data, 48)

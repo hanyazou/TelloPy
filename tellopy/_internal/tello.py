@@ -1,6 +1,10 @@
 import threading
 import socket
 import time
+try:
+    from time import monotonic
+except ImportError:  # Python 2 has no time.monotonic
+    from time import time as monotonic
 import datetime
 import struct
 import sys
@@ -559,7 +563,7 @@ class Tello(object):
         pkt.fixup()
         return self.send_packet(pkt)
 
-    def __process_packet(self, data):
+    def __process_packet(self, data, recv_time=None):
         if isinstance(data, str):
             data = bytearray([x for x in data])
 
@@ -595,7 +599,7 @@ class Tello(object):
             log.debug("recv: log_data: length=%d, %s" % (len(data[9:]), byte_to_hexstring(data[9:])))
             self.__publish(event=self.EVENT_LOG_RAWDATA, data=data[9:])
             try:
-                self.log_data.update(data[10:])
+                self.log_data.update(data[10:], recv_time)
                 if self.log_data_file:
                     self.log_data_file.write(data[10:-2])
             except Exception as ex:
@@ -756,8 +760,9 @@ class Tello(object):
 
             try:
                 data, server = sock.recvfrom(self.udpsize)
+                recv_time = monotonic()
                 log.debug("recv: %s" % byte_to_hexstring(data))
-                self.__process_packet(data)
+                self.__process_packet(data, recv_time)
             except socket.timeout as ex:
                 if self.state == self.STATE_CONNECTED:
                     log.error('recv: timeout')
