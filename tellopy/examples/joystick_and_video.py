@@ -15,7 +15,7 @@ import pygame.locals
 from subprocess import Popen, PIPE
 import threading
 import av
-import cv2.cv2 as cv2  # for avoidance of pylint error
+import cv2
 import numpy
 import time
 import traceback
