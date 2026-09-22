@@ -38,6 +38,7 @@ class Tello(object):
     EVENT_VIDEO_DATA = event.Event('video data')
     EVENT_DISCONNECTED = event.Event('disconnected')
     EVENT_FILE_RECEIVED = event.Event('file received')
+    EVENT_CALIBRATION_STATUS = event.Event('calibration_status')
     # internal events
     __EVENT_CONN_REQ = event.Event('conn_req')
     __EVENT_CONN_ACK = event.Event('conn_ack')
@@ -99,6 +100,9 @@ class Tello(object):
         
         # File recieve state.
         self.file_recv = {}  # Map filenum -> protocol.DownloadedFile
+
+        # IMU calibration polling state; see start_calibration().
+        self.calibration_active = False
 
         # Create a UDP socket
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -262,6 +266,38 @@ class Tello(object):
         pkt.fixup()        
         self.send_packet(pkt)
         self.get_low_bat_threshold()
+
+    def start_calibration(self):
+        """Start IMU calibration.
+
+        The drone must be presented with a series of distinct, held-still
+        orientations (belly down, each side down, nose down, nose up,
+        upside down -- any order is fine) for the calibration to complete;
+        see docs/calibration.md. This call only starts the sequence and
+        begins polling for status; subscribe to EVENT_CALIBRATION_STATUS
+        to follow progress. Polling stops automatically once the drone
+        reports completion (see protocol.CalibrationStatus.done).
+        """
+        self.log.info('start_calibration (cmd=0x%02x seq=0x%04x)' % (
+            CALIBRATION_START_CMD, self.pkt_seq_num))
+        pkt = Packet(CALIBRATION_START_CMD, 0x48)
+        pkt.fixup()
+        self.calibration_active = True
+        return self.send_packet(pkt)
+
+    def stop_calibration(self):
+        """Stop polling for calibration status.
+
+        This only stops this client from polling; it does not tell the
+        drone to cancel/abort an in-progress calibration (no such command
+        is known).
+        """
+        self.calibration_active = False
+
+    def __send_calibration_poll(self):
+        pkt = Packet(CALIBRATION_STATUS_CMD, 0x48)
+        pkt.fixup()
+        self.send_packet(pkt)
 
     def __send_time_command(self):
         log.info('send_time (cmd=0x%02x seq=0x%04x)' % (TIME_CMD, self.pkt_seq_num))
@@ -603,7 +639,10 @@ class Tello(object):
                 if self.log_data_file:
                     self.log_data_file.write(data[10:-2])
             except Exception as ex:
-                log.error('%s' % str(ex))
+                # A parse hiccup in this one log-data sub-stream (e.g. from
+                # UDP reordering/loss); recoverable and doesn't affect
+                # anything else, so this is informational, not an error.
+                log.info('%s' % str(ex))
             self.__publish(event=self.EVENT_LOG_DATA, data=self.log_data)
 
         elif cmd == LOG_CONFIG_MSG:
@@ -630,6 +669,14 @@ class Tello(object):
         elif cmd == TIME_CMD:
             log.debug("recv: time data: %s" % byte_to_hexstring(data))
             self.__publish(event=self.EVENT_TIME, data=data[7:9])
+        elif cmd == CALIBRATION_STATUS_CMD:
+            status = CalibrationStatus(data[9:-2])
+            log.debug("recv: calibration status: %s" % str(status))
+            self.__publish(event=self.EVENT_CALIBRATION_STATUS, data=status)
+            if status.done:
+                self.calibration_active = False
+        elif cmd == CALIBRATION_START_CMD:
+            log.debug("recv: calibration start ack: %s" % byte_to_hexstring(data[9:-2]))
         elif cmd in (SET_ALT_LIMIT_CMD, ATT_LIMIT_CMD, LOW_BAT_THRESHOLD_CMD, TAKEOFF_CMD, LAND_CMD, VIDEO_START_CMD, VIDEO_ENCODER_RATE_CMD, PALM_LAND_CMD,
                      EXPOSURE_CMD, THROW_AND_GO_CMD, EMERGENCY_CMD):
             log.debug("recv: ack: cmd=0x%02x seq=0x%04x %s" %
@@ -757,6 +804,8 @@ class Tello(object):
 
             if self.state == self.STATE_CONNECTED:
                 self.__send_stick_command()  # ignore errors
+                if self.calibration_active:
+                    self.__send_calibration_poll()  # ignore errors
 
             try:
                 data, server = sock.recvfrom(self.udpsize)

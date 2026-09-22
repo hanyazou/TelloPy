@@ -36,6 +36,8 @@ TAKEOFF_CMD                         = 0x0054
 LAND_CMD                            = 0x0055
 FLIGHT_MSG                          = 0x0056
 SET_ALT_LIMIT_CMD                   = 0x0058
+CALIBRATION_START_CMD               = 0x005a
+CALIBRATION_STATUS_CMD              = 0x005b
 FLIP_CMD                            = 0x005c
 THROW_AND_GO_CMD                    = 0x005d
 PALM_LAND_CMD                       = 0x005e
@@ -48,7 +50,7 @@ LOG_HEADER_MSG                      = 0x1050
 LOG_DATA_MSG                        = 0x1051
 LOG_CONFIG_MSG                      = 0x1052
 BOUNCE_CMD                          = 0x1053
-CALIBRATE_CMD                       = 0x1054
+# CALIBRATE_CMD                     = 0x1054 # Use CALIBRATION_START_CMD instead.
 LOW_BAT_THRESHOLD_CMD               = 0x1055
 ALT_LIMIT_MSG                       = 0x1056
 LOW_BAT_THRESHOLD_MSG               = 0x1057
@@ -226,6 +228,43 @@ class FlightData(object):
             (" | MODE: %2d" % self.fly_mode) +
             # (", drone_battery_left=0x%04x" % self.drone_battery_left) +
             "")
+
+
+class CalibrationStatus(object):
+    """Decodes the 5-byte payload of a CALIBRATION_STATUS_CMD reply.
+
+    - `step_mask` (byte[1]): a bitmask that gains one more set bit each
+      time the drone accepts a new, sufficiently distinct orientation. Goes
+      0 -> ... -> 0x3f (all 6 bits set) over a full calibration, regardless
+      of the order orientations are presented in.
+    - `progress` (byte[3]): a coarser 0-100 "calibration data sufficiency"
+      score. Reaches 100 at/after `step_mask` reaches 0x3f.
+    """
+    def __init__(self, data):
+        self.raw = bytes(data)
+        self.step_mask = data[1] if len(data) > 1 else 0
+        self.progress = data[3] if len(data) > 3 else 0
+
+    @property
+    def steps_done(self):
+        """Number of set bits in step_mask (popcount)."""
+        return bin(self.step_mask & 0xff).count('1')
+
+    @property
+    def done(self):
+        return self.progress >= 100
+
+    def __str__(self):
+        return (
+            "progress=%3d%% steps=%d/6 (mask=0b%s) raw=%s"
+            % (
+                self.progress,
+                self.steps_done,
+                bin(self.step_mask)[2:].zfill(6),
+                byte_to_hexstring(self.raw),
+            )
+        )
+
 
 class DownloadedFile(object):
     def __init__(self, filenum, size):
