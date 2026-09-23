@@ -144,7 +144,7 @@ class Tello(object):
 
     def connect(self):
         """Connect is used to send the initial connection request to the drone."""
-        self.__publish(event=self.__EVENT_CONN_REQ)
+        self.__publish(event=self.__EVENT_CONN_REQ, recv_time=None)
 
     def wait_for_connection(self, timeout=None):
         """Wait_for_connection will block until the connection is established."""
@@ -163,8 +163,8 @@ class Tello(object):
         """Subscribe a event such as EVENT_CONNECTED, EVENT_FLIGHT_DATA, EVENT_VIDEO_FRAME and so on."""
         dispatcher.connect(handler, signal)
 
-    def __publish(self, event, data=None, **args):
-        args.update({'data': data})
+    def __publish(self, event, *, recv_time, data=None, **args):
+        args.update({'data': data, 'recv_time': recv_time})
         if 'signal' in args:
             del args['signal']
         if 'sender' in args:
@@ -210,7 +210,7 @@ class Tello(object):
     def quit(self):
         """Quit stops the internal threads."""
         log.info('quit')
-        self.__publish(event=self.__EVENT_QUIT_REQ)
+        self.__publish(event=self.__EVENT_QUIT_REQ, recv_time=None)
 
     def get_alt_limit(self):
         ''' ... '''
@@ -644,7 +644,7 @@ class Tello(object):
                 self.__send_exposure()
                 self.__send_video_encoder_rate()
                 self.__send_start_video()
-            self.__publish(self.__EVENT_CONN_ACK, data)
+            self.__publish(self.__EVENT_CONN_ACK, data=data, recv_time=recv_time)
 
             return True
 
@@ -661,13 +661,13 @@ class Tello(object):
             log.info("recv: log_header: id=%04x, '%s'" % (id, str(data[28:54])))
             log.debug("recv: log_header: %s" % byte_to_hexstring(data[9:]))
             self.__send_ack_log(id)
-            self.__publish(event=self.EVENT_LOG_HEADER, data=data[9:])
+            self.__publish(event=self.EVENT_LOG_HEADER, data=data[9:], recv_time=recv_time)
             if self.log_data_file and not self.log_data_header_recorded:
                 self.log_data_file.write(data[12:-2])
                 self.log_data_header_recorded = True
         elif cmd == LOG_DATA_MSG:
             log.debug("recv: log_data: length=%d, %s" % (len(data[9:]), byte_to_hexstring(data[9:])))
-            self.__publish(event=self.EVENT_LOG_RAWDATA, data=data[9:])
+            self.__publish(event=self.EVENT_LOG_RAWDATA, data=data[9:], recv_time=recv_time)
             try:
                 self.log_data.update(data[10:], recv_time)
                 if self.log_data_file:
@@ -677,15 +677,15 @@ class Tello(object):
                 # UDP reordering/loss); recoverable and doesn't affect
                 # anything else, so this is informational, not an error.
                 log.info('%s' % str(ex))
-            self.__publish(event=self.EVENT_LOG_DATA, data=self.log_data)
+            self.__publish(event=self.EVENT_LOG_DATA, data=self.log_data, recv_time=self.log_data.recv_time)
 
         elif cmd == LOG_CONFIG_MSG:
             log.debug("recv: log_config: length=%d, %s" % (len(data[9:]), byte_to_hexstring(data[9:])))
-            self.__publish(event=self.EVENT_LOG_CONFIG, data=data[9:])
+            self.__publish(event=self.EVENT_LOG_CONFIG, data=data[9:], recv_time=recv_time)
         elif cmd == WIFI_MSG:
             log.debug("recv: wifi: %s" % byte_to_hexstring(data[9:]))
             self.wifi_strength = data[9]
-            self.__publish(event=self.EVENT_WIFI, data=data[9:])
+            self.__publish(event=self.EVENT_WIFI, data=data[9:], recv_time=recv_time)
         elif cmd == ALT_LIMIT_MSG:
             log.info("recv: altitude limit: %s" % byte_to_hexstring(data[9:-2]))
         elif cmd == ATT_LIMIT_MSG:
@@ -694,19 +694,19 @@ class Tello(object):
             log.info("recv: low battery threshold: %s" % byte_to_hexstring(data[9:-2]))
         elif cmd == LIGHT_MSG:
             log.debug("recv: light: %s" % byte_to_hexstring(data[9:-2]))
-            self.__publish(event=self.EVENT_LIGHT, data=data[9:])
+            self.__publish(event=self.EVENT_LIGHT, data=data[9:], recv_time=recv_time)
         elif cmd == FLIGHT_MSG:
             flight_data = FlightData(data[9:])
             flight_data.wifi_strength = self.wifi_strength
             log.debug("recv: flight data: %s" % str(flight_data))
-            self.__publish(event=self.EVENT_FLIGHT_DATA, data=flight_data)
+            self.__publish(event=self.EVENT_FLIGHT_DATA, data=flight_data, recv_time=recv_time)
         elif cmd == TIME_CMD:
             log.debug("recv: time data: %s" % byte_to_hexstring(data))
-            self.__publish(event=self.EVENT_TIME, data=data[7:9])
+            self.__publish(event=self.EVENT_TIME, data=data[7:9], recv_time=recv_time)
         elif cmd == CALIBRATION_STATUS_CMD:
             status = CalibrationStatus(data[9:-2])
             log.debug("recv: calibration status: %s" % str(status))
-            self.__publish(event=self.EVENT_CALIBRATION_STATUS, data=status)
+            self.__publish(event=self.EVENT_CALIBRATION_STATUS, data=status, recv_time=recv_time)
             if status.done:
                 self.calibration_active = False
         elif cmd == CALIBRATION_START_CMD:
@@ -737,14 +737,14 @@ class Tello(object):
             # log.info("recv: file data: %s" % byte_to_hexstring(data[9:21]))
             # Drone is sending us a fragment of a file it told us to prepare
             # for earlier.
-            self.recv_file_data(pkt.get_data())
+            self.recv_file_data(pkt.get_data(), recv_time)
         else:
             log.info('unknown packet: %04x %s' % (cmd, byte_to_hexstring(data)))
             return False
 
         return True
 
-    def recv_file_data(self, data):
+    def recv_file_data(self, data, recv_time=None):
         (filenum,chunk,fragment,size) = struct.unpack('<HLLH', data[0:12])
         file = self.file_recv.get(filenum, None)
 
@@ -768,7 +768,7 @@ class Tello(object):
             self.send_packet_data(TELLO_CMD_FILE_COMPLETE, type=0x48,
                 payload=struct.pack('<HL', filenum, file.size))
             # Inform subscribers that we have a file and clean up.
-            self.__publish(event=self.EVENT_FILE_RECEIVED, data=file.data())
+            self.__publish(event=self.EVENT_FILE_RECEIVED, data=file.data(), recv_time=recv_time)
             del self.file_recv[filenum]
 
     def record_log_data(self, path = None):
@@ -849,7 +849,7 @@ class Tello(object):
             except socket.timeout as ex:
                 if self.state == self.STATE_CONNECTED:
                     log.error('recv: timeout')
-                self.__publish(event=self.__EVENT_TIMEOUT)
+                self.__publish(event=self.__EVENT_TIMEOUT, recv_time=None)
             except Exception as ex:
                 log.error('recv: %s' % str(ex))
                 show_exception(ex)
@@ -876,6 +876,7 @@ class Tello(object):
                 continue
             try:
                 data, server = sock.recvfrom(self.udpsize)
+                recv_time = monotonic()
                 now = datetime.datetime.now()
                 log.debug("video recv: %s %d bytes" % (byte_to_hexstring(data[0:2]), len(data)))
                 show_history = False
@@ -914,8 +915,8 @@ class Tello(object):
                     history = history[-1:]
 
                 # deliver video frame to subscribers
-                self.__publish(event=self.EVENT_VIDEO_FRAME, data=data[2:])
-                self.__publish(event=self.EVENT_VIDEO_DATA, data=data)
+                self.__publish(event=self.EVENT_VIDEO_FRAME, data=data[2:], recv_time=recv_time)
+                self.__publish(event=self.EVENT_VIDEO_DATA, data=data, recv_time=recv_time)
 
                 # show video frame statistics
                 if self.prev_video_data_time is None:
