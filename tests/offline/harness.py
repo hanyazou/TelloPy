@@ -88,6 +88,7 @@ class DroneTestCase(unittest.TestCase):
         finally:
             log.error, log.log_level, tello_module.show_exception = self._saved_log
             dispatcher.signals.clear()
+            dispatcher.accepted_kwargs.clear()
         self.assertEqual(self.errors, [], 'the library logged errors (swallowed exceptions?)\n' +
                          ''.join(self.tracebacks))
         self.assertEqual(leaked, [], 'threads still running after quit()')
