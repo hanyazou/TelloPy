@@ -174,11 +174,6 @@ class Tello(object):
 
     def takeoff(self):
         """Takeoff tells the drones to liftoff and start flying."""
-        log.info('set altitude limit 30m')
-        pkt = Packet(SET_ALT_LIMIT_CMD)
-        pkt.add_byte(0x1e)  # 30m
-        pkt.add_byte(0x00)
-        self.send_packet(pkt)
         seq_num = self.__next_seq_num()
         log.info('takeoff (cmd=0x%02x seq=0x%04x)' % (TAKEOFF_CMD, seq_num))
         pkt = Packet(TAKEOFF_CMD)
