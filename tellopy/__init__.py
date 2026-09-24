@@ -6,5 +6,11 @@ code was ported from the driver of GOBOT project. Please refer their blog post a
 https://gobot.io/blog/2018/04/20/hello-tello-hacking-drones-with-go
 """
 from tellopy._internal.tello import Tello
+from tellopy._internal.container import Container, GyroContainer, ImuContainer, StickContainer
+from tellopy._internal.estimator import Estimator, ResponseLagEstimator, TickClock
 
-__all__ = ["Tello"]
+__all__ = [
+    "Tello",
+    "Container", "GyroContainer", "ImuContainer", "StickContainer",
+    "Estimator", "ResponseLagEstimator", "TickClock",
+]
