@@ -89,11 +89,12 @@ class Tello(object):
     # before we give up on it and evict it from __pending_sends.
     COMMAND_ACK_TIMEOUT_SEC = 3.0
 
-    def __init__(self, port=9000):
+    def __init__(self, port=9000, video_port=6038):
         self.tello_addr = ('192.168.10.1', 8889)
         self.debug = False
         self.pkt_seq_num = 0x01e4
         self.port = port
+        self.video_port = video_port
         self.udpsize = 2000
         self.left_x = 0.0
         self.left_y = 0.0
@@ -218,6 +219,9 @@ class Tello(object):
         """Quit stops the internal threads."""
         log.info('quit')
         self.__publish(event=self.__EVENT_QUIT_REQ, recv_time=None)
+        # The dispatcher is module-global, so without this the state machine
+        # would keep receiving every event of every later Tello as well.
+        dispatcher.disconnect(self.__state_machine)
 
     def get_alt_limit(self):
         ''' ... '''
@@ -871,8 +875,7 @@ class Tello(object):
         log.info('start video thread')
         # Create a UDP socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        port = 6038
-        sock.bind(('', port))
+        sock.bind(('', self.video_port))
         sock.settimeout(1.0)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 512 * 1024)
         log.info('video receive buffer size = %d' %
