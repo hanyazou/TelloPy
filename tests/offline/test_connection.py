@@ -26,6 +26,43 @@ class ConnectionTest(DroneTestCase):
 
 class CommandTest(DroneTestCase):
 
+    def test_command_is_sent_intact_acked_and_reported(self):
+        drone = self.start_drone()
+        acks = []
+        drone.subscribe(drone.EVENT_SAMPLE_COMMAND_ACK, lambda event, sender, data: acks.append(data))
+        self.connect()
+        drone.takeoff()
+        wait_until(lambda: acks, what='the ack of takeoff')
+
+        sent = self.fake.wait_for_cmd(protocol.TAKEOFF_CMD)[0]
+        self.assertTrue(sent.crc_ok)
+        self.assertNotEqual(sent.seq, 0)
+        sample = acks[0]
+        self.assertEqual((sample.name, sample.cmd, sample.seq), ('takeoff', protocol.TAKEOFF_CMD, sent.seq))
+        self.assertTrue(sample.acked)
+        self.assertTrue(0 <= sample.rtt < 1.0)
+        self.assertEqual(sample.event_time, sample.send_time)
+
+    def test_unanswered_command_is_reported_as_timed_out(self):
+        drone = self.start_drone()
+        timeouts, acks = [], []
+        drone.subscribe(drone.EVENT_SAMPLE_COMMAND_TIMEOUT, lambda event, sender, data: timeouts.append(data))
+        drone.subscribe(drone.EVENT_SAMPLE_COMMAND_ACK, lambda event, sender, data: acks.append(data))
+        self.connect()
+        self.fake.wait_for_cmd(protocol.TIME_CMD)
+        wait_until(lambda: not drone._Tello__pending_sends, what='replies to the startup commands')
+        self.fake.ack_enabled = False
+        drone.COMMAND_ACK_TIMEOUT_SEC = 0.2
+        drone.land()
+
+        def keep_the_check_running():
+            self.fake.send_flight_data()
+            return timeouts
+        wait_until(keep_the_check_running, what='the timeout of land')
+        self.assertEqual(timeouts[0].name, 'land')
+        self.assertFalse(timeouts[0].acked)
+        self.assertEqual([a.name for a in acks if a.name == 'land'], [])
+
     def test_every_packet_sent_has_a_valid_crc_and_a_distinct_seq(self):
         drone = self.connect()
         for _ in range(20):
