@@ -43,6 +43,22 @@ class Tello(object):
     EVENT_CALIBRATION_STATUS = event.Event('calibration_status')
     EVENT_SAMPLE_COMMAND_ACK = event.Event('sample_command_ack')
     EVENT_SAMPLE_COMMAND_TIMEOUT = event.Event('sample_command_timeout')
+    # One per record in a log data message; data is the decoded LogRecord
+    # (a LogImuAtti for EVENT_SAMPLE_IMU, and so on).
+    EVENT_SAMPLE_IMU = event.Event('sample_imu')
+    EVENT_SAMPLE_GYRO = event.Event('sample_gyro')
+    EVENT_SAMPLE_TOF = event.Event('sample_tof')
+    EVENT_SAMPLE_MVO = event.Event('sample_mvo')
+    EVENT_SAMPLE_CONTROL = event.Event('sample_control')
+    # A record whose id has no decoder yet; data is a bare LogRecord.
+    EVENT_SAMPLE_RAW = event.Event('sample_raw')
+    __RECORD_EVENTS = {
+        LogImuAtti: EVENT_SAMPLE_IMU,
+        LogGyro: EVENT_SAMPLE_GYRO,
+        LogTof: EVENT_SAMPLE_TOF,
+        LogNewMvoFeedback: EVENT_SAMPLE_MVO,
+        LogControl: EVENT_SAMPLE_CONTROL,
+    }
     # internal events
     __EVENT_CONN_REQ = event.Event('conn_req')
     __EVENT_CONN_ACK = event.Event('conn_ack')
@@ -592,6 +608,19 @@ class Tello(object):
         sample.mark_acked(recv_time, ack_payload)
         self.__publish(event=self.EVENT_SAMPLE_COMMAND_ACK, data=sample, recv_time=recv_time)
 
+    def __publish_log_records(self, recv_time):
+        """Publish one EVENT_SAMPLE_* for each record the last log data
+        message held.
+
+        EVENT_LOG_DATA fires once per message with a single LogData that
+        only remembers the latest record of each kind, so a subscriber
+        can't tell a fresh record from a repeat. These fire once per
+        record instead, in the order they appeared in the message.
+        """
+        for record in self.log_data.records:
+            event = self.__RECORD_EVENTS.get(type(record), self.EVENT_SAMPLE_RAW)
+            self.__publish(event=event, data=record, recv_time=recv_time)
+
     def send_packet(self, pkt):
         """Send_packet is used to send a command packet to the drone."""
         try:
@@ -659,6 +688,7 @@ class Tello(object):
                 # anything else, so this is informational, not an error.
                 log.info('%s' % str(ex))
             self.__publish(event=self.EVENT_LOG_DATA, data=self.log_data, recv_time=self.log_data.recv_time)
+            self.__publish_log_records(recv_time)
 
         elif cmd == LOG_CONFIG_MSG:
             log.debug("recv: log_config: length=%d, %s" % (len(data[9:]), byte_to_hexstring(data[9:])))
