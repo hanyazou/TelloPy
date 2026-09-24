@@ -3,9 +3,9 @@ import math
 import random
 import unittest
 
-from tellopy._internal.container import Container, GyroContainer, StickContainer
+from tellopy._internal.container import Container, GyroContainer, ImuContainer, StickContainer
 from tellopy._internal.estimator import LagSample, ResponseLagEstimator, TickClock
-from tellopy._internal.protocol import LogGyro
+from tellopy._internal.protocol import LogGyro, LogImuAtti
 from tellopy._internal.sample import Sample, StickSample
 
 FREQ = 2344050.0
@@ -370,6 +370,71 @@ class ResponseLagEstimatorTest(unittest.TestCase):
         estimator.close()
         sticks.add(StickSample(1.0, 0, 0, 0, 0.5, False))
         self.assertEqual(estimator._quiet_since, None)
+
+
+class TiltResponseTest(unittest.TestCase):
+    """The roll and pitch axes, answered by the tilt angle the IMU's quaternion gives."""
+
+    PULSES = [(4 + 3.5 * k, 4.6 + 3.5 * k, (0.5, -0.5)[k % 2]) for k in range(10)]
+
+    def estimate(self, axis, rate, flight=None):
+        flight = flight or Flight(self.PULSES, noise=0.0, seed=5)
+        response = flight.gyro_response()
+        rng = random.Random(9)
+        tick_at = lambda t: int(3000000 + FREQ * t) & 0xffffffff
+        sticks, imus = StickContainer(), ImuContainer()
+        clock = TickClock(imus)
+        estimator = ResponseLagEstimator(sticks, imus, clock, axis=axis)
+        events = []
+        for k in range(int(flight.duration * rate)):
+            t = k / rate
+            angle = 0.1 * response[int(t * 1000)] + rng.gauss(0, 0.002)
+            imu = LogImuAtti()
+            imu.tick = tick_at(t)
+            imu.recv_time = imu.event_time = t + DELAY + rng.gauss(0, 0.01)
+            half = angle / 2
+            imu.q0, imu.q1, imu.q2, imu.q3 = (math.cos(half), math.sin(half), 0.0, 0.0) if axis == 'roll' \
+                else (math.cos(half), 0.0, math.sin(half), 0.0)
+            events.append((imu.recv_time, imu))
+        for k in range(int(flight.duration * 30)):
+            t = k / 30.0
+            command = flight.command(t)
+            events.append((t, StickSample(t, command if axis == 'roll' else 0.0, command if axis == 'pitch' else 0.0,
+                                          0.0, 0.0, False)))
+        for _, sample in sorted(events, key=lambda event: event[0]):
+            (sticks if isinstance(sample, StickSample) else imus).add(sample)
+        return estimator, flight
+
+    def test_roll_and_pitch_lags_are_found_from_the_tilt_angle(self):
+        for axis in ('roll', 'pitch'):
+            estimator, flight = self.estimate(axis, rate=100.0)
+            onset, midpoint = flight.expected()
+            self.assertEqual(len(estimator), len(self.PULSES), (axis, dict(estimator.skipped)))
+            self.assertAlmostEqual(estimator.summary('onset').median, onset, delta=0.006)
+            self.assertAlmostEqual(estimator.summary('midpoint').median, midpoint, delta=0.006)
+            self.assertEqual({lag.axis for lag in estimator}, {axis})
+            self.assertTrue(str(estimator.latest()).startswith(axis))
+
+    def test_at_the_imu_rate_the_midpoint_is_still_good(self):
+        estimator, flight = self.estimate('roll', rate=10.0)
+        self.assertGreaterEqual(len(estimator), len(self.PULSES) - 1)
+        self.assertAlmostEqual(estimator.summary('midpoint').median, flight.expected()[1], delta=0.02)
+
+    def test_a_command_on_another_axis_is_not_taken_for_this_one(self):
+        # the sticks move in pitch, the estimator listens for roll
+        flight = Flight(self.PULSES, noise=0.0, seed=5)
+        estimator, _ = self.estimate('roll', rate=100.0, flight=flight)
+        sticks, imus = StickContainer(), ImuContainer()
+        other = ResponseLagEstimator(sticks, imus, TickClock(imus), axis='pitch')
+        for k in range(300):
+            sticks.add(StickSample(k / 30.0, 0.5, 0.0, 0.0, 0.0, False))        # roll only
+        self.assertEqual((len(other), other._quiet_since is not None, other._pulse), (0, True, None))
+
+    def test_throttle_has_no_default_signal(self):
+        sticks, imus = StickContainer(), ImuContainer()
+        with self.assertRaises(ValueError):
+            ResponseLagEstimator(sticks, imus, TickClock(imus), axis='throttle')
+        ResponseLagEstimator(sticks, imus, TickClock(imus), axis='throttle', signal=lambda imu: imu.acc_z)
 
 
 if __name__ == '__main__':
