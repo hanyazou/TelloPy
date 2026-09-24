@@ -174,38 +174,19 @@ class Tello(object):
 
     def takeoff(self):
         """Takeoff tells the drones to liftoff and start flying."""
-        seq_num = self.__next_seq_num()
-        log.info('takeoff (cmd=0x%02x seq=0x%04x)' % (TAKEOFF_CMD, seq_num))
-        pkt = Packet(TAKEOFF_CMD)
-        pkt.fixup(seq_num)
-        return self.send_packet(pkt)
+        return self.__send_command(TAKEOFF_CMD, 'takeoff')
 
     def throw_and_go(self):
         """Throw_and_go starts a throw and go sequence"""
-        seq_num = self.__next_seq_num()
-        log.info('throw_and_go (cmd=0x%02x seq=0x%04x)' % (THROW_AND_GO_CMD, seq_num))
-        pkt = Packet(THROW_AND_GO_CMD, 0x48)
-        pkt.add_byte(0x00)
-        pkt.fixup(seq_num)
-        return self.send_packet(pkt)
+        return self.__send_command(THROW_AND_GO_CMD, 'throw_and_go', payload=bytearray([0x00]), pkt_type=0x48)
 
     def land(self):
         """Land tells the drone to come in for landing."""
-        seq_num = self.__next_seq_num()
-        log.info('land (cmd=0x%02x seq=0x%04x)' % (LAND_CMD, seq_num))
-        pkt = Packet(LAND_CMD)
-        pkt.add_byte(0x00)
-        pkt.fixup(seq_num)
-        return self.send_packet(pkt)
+        return self.__send_command(LAND_CMD, 'land', payload=bytearray([0x00]))
 
     def palm_land(self):
         """Tells the drone to wait for a hand underneath it and then land."""
-        seq_num = self.__next_seq_num()
-        log.info('palmland (cmd=0x%02x seq=0x%04x)' % (PALM_LAND_CMD, seq_num))
-        pkt = Packet(PALM_LAND_CMD)
-        pkt.add_byte(0x00)
-        pkt.fixup(seq_num)
-        return self.send_packet(pkt)
+        return self.__send_command(PALM_LAND_CMD, 'palmland', payload=bytearray([0x00]))
 
     def quit(self):
         """Quit stops the internal threads."""
@@ -214,63 +195,34 @@ class Tello(object):
 
     def get_alt_limit(self):
         ''' ... '''
-        seq_num = self.__next_seq_num()
-        self.log.debug('get altitude limit (cmd=0x%02x seq=0x%04x)' % (
-            ALT_LIMIT_MSG, seq_num))
-        pkt = Packet(ALT_LIMIT_MSG)
-        pkt.fixup(seq_num)
-        return self.send_packet(pkt)
-        
+        self.log.debug('get altitude limit (cmd=0x%02x)' % ALT_LIMIT_MSG)
+        return self.__send_command(ALT_LIMIT_MSG, 'get_alt_limit', quiet=True)
+
     def set_alt_limit(self, limit):
-        seq_num = self.__next_seq_num()
-        self.log.info('set altitude limit=%s (cmd=0x%02x seq=0x%04x)' % (
-            int(limit), SET_ALT_LIMIT_CMD, seq_num))
-        pkt = Packet(SET_ALT_LIMIT_CMD)
-        pkt.add_byte(int(limit))
-        pkt.add_byte(0x00)
-        pkt.fixup(seq_num)
-        self.send_packet(pkt)
+        self.log.info('set altitude limit=%s (cmd=0x%02x)' % (int(limit), SET_ALT_LIMIT_CMD))
+        self.__send_command(SET_ALT_LIMIT_CMD, 'set_alt_limit', payload=bytearray([int(limit), 0x00]), quiet=True)
         self.get_alt_limit()
 
     def get_att_limit(self):
         ''' ... '''
-        seq_num = self.__next_seq_num()
-        self.log.debug('get attitude limit (cmd=0x%02x seq=0x%04x)' % (
-            ATT_LIMIT_MSG, seq_num))
-        pkt = Packet(ATT_LIMIT_MSG)
-        pkt.fixup(seq_num)
-        return self.send_packet(pkt)
-        
+        self.log.debug('get attitude limit (cmd=0x%02x)' % ATT_LIMIT_MSG)
+        return self.__send_command(ATT_LIMIT_MSG, 'get_att_limit', quiet=True)
+
     def set_att_limit(self, limit):
-        seq_num = self.__next_seq_num()
-        self.log.info('set attitude limit=%s (cmd=0x%02x seq=0x%04x)' % (
-            int(limit), ATT_LIMIT_CMD, seq_num))
-        pkt = Packet(ATT_LIMIT_CMD)
-        pkt.add_byte(0x00)
-        pkt.add_byte(0x00)
-        pkt.add_byte( int(float_to_hex(float(limit))[4:6], 16) ) # 'attitude limit' formatted in float of 4 bytes
-        pkt.add_byte(0x41)
-        pkt.fixup(seq_num)
-        self.send_packet(pkt)
+        self.log.info('set attitude limit=%s (cmd=0x%02x)' % (int(limit), ATT_LIMIT_CMD))
+        # 'attitude limit' formatted in float of 4 bytes
+        payload = bytearray([0x00, 0x00, int(float_to_hex(float(limit))[4:6], 16), 0x41])
+        self.__send_command(ATT_LIMIT_CMD, 'set_att_limit', payload=payload, quiet=True)
         self.get_att_limit()
 
     def get_low_bat_threshold(self):
         ''' ... '''
-        seq_num = self.__next_seq_num()
-        self.log.debug('get low battery threshold (cmd=0x%02x seq=0x%04x)' % (
-            LOW_BAT_THRESHOLD_MSG, seq_num))
-        pkt = Packet(LOW_BAT_THRESHOLD_MSG)
-        pkt.fixup(seq_num)
-        return self.send_packet(pkt)
-        
+        self.log.debug('get low battery threshold (cmd=0x%02x)' % LOW_BAT_THRESHOLD_MSG)
+        return self.__send_command(LOW_BAT_THRESHOLD_MSG, 'get_low_bat_threshold', quiet=True)
+
     def set_low_bat_threshold(self, threshold):
-        seq_num = self.__next_seq_num()
-        self.log.info('set low battery threshold=%s (cmd=0x%02x seq=0x%04x)' % (
-            int(threshold), LOW_BAT_THRESHOLD_CMD, seq_num))
-        pkt = Packet(LOW_BAT_THRESHOLD_CMD)
-        pkt.add_byte(int(threshold))
-        pkt.fixup(seq_num)
-        self.send_packet(pkt)
+        self.log.info('set low battery threshold=%s (cmd=0x%02x)' % (int(threshold), LOW_BAT_THRESHOLD_CMD))
+        self.__send_command(LOW_BAT_THRESHOLD_CMD, 'set_low_bat_threshold', payload=bytearray([int(threshold)]), quiet=True)
         self.get_low_bat_threshold()
 
     def start_calibration(self):
@@ -284,13 +236,8 @@ class Tello(object):
         to follow progress. Polling stops automatically once the drone
         reports completion (see protocol.CalibrationStatus.done).
         """
-        seq_num = self.__next_seq_num()
-        self.log.info('start_calibration (cmd=0x%02x seq=0x%04x)' % (
-            CALIBRATION_START_CMD, seq_num))
-        pkt = Packet(CALIBRATION_START_CMD, 0x48)
-        pkt.fixup(seq_num)
         self.calibration_active = True
-        return self.send_packet(pkt)
+        return self.__send_command(CALIBRATION_START_CMD, 'start_calibration', pkt_type=0x48)
 
     def stop_calibration(self):
         """Stop polling for calibration status.
@@ -302,9 +249,7 @@ class Tello(object):
         self.calibration_active = False
 
     def __send_calibration_poll(self):
-        pkt = Packet(CALIBRATION_STATUS_CMD, 0x48)
-        pkt.fixup(self.__next_seq_num())
-        self.send_packet(pkt)
+        self.__send_command(CALIBRATION_STATUS_CMD, 'calibration_poll', pkt_type=0x48, quiet=True)
 
     def __send_time_command(self):
         seq_num = self.__next_seq_num()
@@ -316,15 +261,10 @@ class Tello(object):
         return self.send_packet(pkt)
 
     def __send_start_video(self):
-        pkt = Packet(VIDEO_START_CMD, 0x60)
-        pkt.fixup(self.__next_seq_num())
-        return self.send_packet(pkt)
+        return self.__send_command(VIDEO_START_CMD, 'start_video', pkt_type=0x60, quiet=True)
 
     def __send_video_mode(self, mode):
-        pkt = Packet(VIDEO_MODE_CMD)
-        pkt.add_byte(mode)
-        pkt.fixup(self.__next_seq_num())
-        return self.send_packet(pkt)
+        return self.__send_command(VIDEO_MODE_CMD, 'set_video_mode', payload=bytearray([mode]), quiet=True)
 
     def set_video_mode(self, zoom=False):
         """Tell the drone whether to capture 960x720 4:3 video, or 1280x720 16:9 zoomed video.
@@ -350,10 +290,7 @@ class Tello(object):
         return self.__send_exposure()
 
     def __send_exposure(self):
-        pkt = Packet(EXPOSURE_CMD, 0x48)
-        pkt.add_byte(self.exposure)
-        pkt.fixup(self.__next_seq_num())
-        return self.send_packet(pkt)
+        return self.__send_command(EXPOSURE_CMD, 'set_exposure', payload=bytearray([self.exposure]), pkt_type=0x48, quiet=True)
 
     def set_video_encoder_rate(self, rate):
         """Set_video_encoder_rate sets the drone video encoder rate."""
@@ -362,10 +299,7 @@ class Tello(object):
         return self.__send_video_encoder_rate()
 
     def __send_video_encoder_rate(self):
-        pkt = Packet(VIDEO_ENCODER_RATE_CMD, 0x68)
-        pkt.add_byte(self.video_encoder_rate)
-        pkt.fixup(self.__next_seq_num())
-        return self.send_packet(pkt)
+        return self.__send_command(VIDEO_ENCODER_RATE_CMD, 'set_video_encoder_rate', payload=bytearray([self.video_encoder_rate]), quiet=True)
 
     def take_picture(self):
         log.info('take picture')
@@ -419,75 +353,35 @@ class Tello(object):
 
     def flip_forward(self):
         """flip_forward tells the drone to perform a forwards flip"""
-        seq_num = self.__next_seq_num()
-        log.info('flip_forward (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipFront)
-        pkt.fixup(seq_num)
-        return self.send_packet(pkt)
+        return self.__send_command(FLIP_CMD, 'flip_forward', payload=bytearray([FlipFront]), pkt_type=0x70)
 
     def flip_back(self):
         """flip_back tells the drone to perform a backwards flip"""
-        seq_num = self.__next_seq_num()
-        log.info('flip_back (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipBack)
-        pkt.fixup(seq_num)
-        return self.send_packet(pkt)
+        return self.__send_command(FLIP_CMD, 'flip_back', payload=bytearray([FlipBack]), pkt_type=0x70)
 
     def flip_right(self):
         """flip_right tells the drone to perform a right flip"""
-        seq_num = self.__next_seq_num()
-        log.info('flip_right (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipRight)
-        pkt.fixup(seq_num)
-        return self.send_packet(pkt)
+        return self.__send_command(FLIP_CMD, 'flip_right', payload=bytearray([FlipRight]), pkt_type=0x70)
 
     def flip_left(self):
         """flip_left tells the drone to perform a left flip"""
-        seq_num = self.__next_seq_num()
-        log.info('flip_left (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipLeft)
-        pkt.fixup(seq_num)
-        return self.send_packet(pkt)
+        return self.__send_command(FLIP_CMD, 'flip_left', payload=bytearray([FlipLeft]), pkt_type=0x70)
 
     def flip_forwardleft(self):
         """flip_forwardleft tells the drone to perform a forwards left flip"""
-        seq_num = self.__next_seq_num()
-        log.info('flip_forwardleft (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipForwardLeft)
-        pkt.fixup(seq_num)
-        return self.send_packet(pkt)
+        return self.__send_command(FLIP_CMD, 'flip_forwardleft', payload=bytearray([FlipForwardLeft]), pkt_type=0x70)
 
     def flip_backleft(self):
         """flip_backleft tells the drone to perform a backwards left flip"""
-        seq_num = self.__next_seq_num()
-        log.info('flip_backleft (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipBackLeft)
-        pkt.fixup(seq_num)
-        return self.send_packet(pkt)
+        return self.__send_command(FLIP_CMD, 'flip_backleft', payload=bytearray([FlipBackLeft]), pkt_type=0x70)
 
     def flip_forwardright(self):
         """flip_forwardright tells the drone to perform a forwards right flip"""
-        seq_num = self.__next_seq_num()
-        log.info('flip_forwardright (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipForwardRight)
-        pkt.fixup(seq_num)
-        return self.send_packet(pkt)
+        return self.__send_command(FLIP_CMD, 'flip_forwardright', payload=bytearray([FlipForwardRight]), pkt_type=0x70)
 
     def flip_backright(self):
         """flip_backleft tells the drone to perform a backwards right flip"""
-        seq_num = self.__next_seq_num()
-        log.info('flip_backright (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipBackRight)
-        pkt.fixup(seq_num)
-        return self.send_packet(pkt)
+        return self.__send_command(FLIP_CMD, 'flip_backright', payload=bytearray([FlipBackRight]), pkt_type=0x70)
 
     def __fix_range(self, val, min=-1.0, max=1.0):
         if val < min:
@@ -585,13 +479,8 @@ class Tello(object):
         return self.send_packet(pkt)
 
     def __send_ack_log(self, id):
-        pkt = Packet(LOG_HEADER_MSG, 0x50)
-        pkt.add_byte(0x00)
         b0, b1 = le16(id)
-        pkt.add_byte(b0)
-        pkt.add_byte(b1)
-        pkt.fixup(self.__next_seq_num())
-        return self.send_packet(pkt)
+        return self.__send_command(LOG_HEADER_MSG, 'ack_log', payload=bytearray([0x00, b0, b1]), pkt_type=0x50, quiet=True)
 
     def __next_seq_num(self):
         """Return a fresh sequence number to embed in an outgoing packet.
@@ -612,6 +501,23 @@ class Tello(object):
             if self.pkt_seq_num == 0:
                 self.pkt_seq_num = 1
             return self.pkt_seq_num
+
+    def __send_command(self, cmd, name, payload=b'', pkt_type=0x68, quiet=False):
+        """Build, number, and send a simple one-shot command packet.
+
+        payload is the raw bytes to place after the header (equivalent to
+        a string of add_byte() calls). Set quiet=True when the caller
+        already logs something more specific itself (e.g. a value being
+        set, or because it's one of several sends behind one public call
+        such as start_video()), so we don't also log this generic
+        "name (cmd=... seq=...)" line on top of it.
+        """
+        seq_num = self.__next_seq_num()
+        pkt = Packet(cmd, pkt_type, payload)
+        pkt.fixup(seq_num)
+        if not quiet:
+            log.info('%s (cmd=0x%02x seq=0x%04x)' % (name, cmd, seq_num))
+        return self.send_packet(pkt)
 
     def send_packet(self, pkt):
         """Send_packet is used to send a command packet to the drone."""
