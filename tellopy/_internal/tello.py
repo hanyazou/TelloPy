@@ -9,6 +9,7 @@ import datetime
 import struct
 import sys
 import os
+from collections import OrderedDict
 
 from . import crc
 from . import logger
@@ -19,6 +20,7 @@ from . import video_stream
 from . utils import *
 from . protocol import *
 from . import dispatcher
+from . sample import CommandSample
 
 log = logger.Logger('Tello')
 
@@ -39,6 +41,8 @@ class Tello(object):
     EVENT_DISCONNECTED = event.Event('disconnected')
     EVENT_FILE_RECEIVED = event.Event('file received')
     EVENT_CALIBRATION_STATUS = event.Event('calibration_status')
+    EVENT_SAMPLE_COMMAND_ACK = event.Event('sample_command_ack')
+    EVENT_SAMPLE_COMMAND_TIMEOUT = event.Event('sample_command_timeout')
     # internal events
     __EVENT_CONN_REQ = event.Event('conn_req')
     __EVENT_CONN_ACK = event.Event('conn_ack')
@@ -65,6 +69,10 @@ class Tello(object):
     LOG_DEBUG = logger.LOG_DEBUG
     LOG_ALL = logger.LOG_ALL
 
+    # How long an outgoing command may wait for its matching response
+    # before we give up on it and evict it from __pending_sends.
+    COMMAND_ACK_TIMEOUT_SEC = 3.0
+
     def __init__(self, port=9000):
         self.tello_addr = ('192.168.10.1', 8889)
         self.debug = False
@@ -79,6 +87,8 @@ class Tello(object):
         self.state = self.STATE_DISCONNECTED
         self.lock = threading.Lock()
         self.seq_num_lock = threading.Lock()
+        self.__pending_sends_lock = threading.Lock()
+        self.__pending_sends = OrderedDict()
         self.connected = threading.Event()
         self.video_enabled = False
         self.prev_video_data_time = None
@@ -237,7 +247,7 @@ class Tello(object):
         reports completion (see protocol.CalibrationStatus.done).
         """
         self.calibration_active = True
-        return self.__send_command(CALIBRATION_START_CMD, 'start_calibration', pkt_type=0x48)
+        return self.__send_command(CALIBRATION_START_CMD, 'start_calibration', pkt_type=0x48, track=False)
 
     def stop_calibration(self):
         """Stop polling for calibration status.
@@ -249,7 +259,7 @@ class Tello(object):
         self.calibration_active = False
 
     def __send_calibration_poll(self):
-        self.__send_command(CALIBRATION_STATUS_CMD, 'calibration_poll', pkt_type=0x48, quiet=True)
+        self.__send_command(CALIBRATION_STATUS_CMD, 'calibration_poll', pkt_type=0x48, quiet=True, track=False)
 
     def __send_time_command(self):
         seq_num = self.__next_seq_num()
@@ -480,7 +490,7 @@ class Tello(object):
 
     def __send_ack_log(self, id):
         b0, b1 = le16(id)
-        return self.__send_command(LOG_HEADER_MSG, 'ack_log', payload=bytearray([0x00, b0, b1]), pkt_type=0x50, quiet=True)
+        return self.__send_command(LOG_HEADER_MSG, 'ack_log', payload=bytearray([0x00, b0, b1]), pkt_type=0x50, quiet=True, track=False)
 
     def __next_seq_num(self):
         """Return a fresh sequence number to embed in an outgoing packet.
@@ -502,7 +512,7 @@ class Tello(object):
                 self.pkt_seq_num = 1
             return self.pkt_seq_num
 
-    def __send_command(self, cmd, name, payload=b'', pkt_type=0x68, quiet=False):
+    def __send_command(self, cmd, name, payload=b'', pkt_type=0x68, quiet=False, track=True):
         """Build, number, and send a simple one-shot command packet.
 
         payload is the raw bytes to place after the header (equivalent to
@@ -511,18 +521,82 @@ class Tello(object):
         set, or because it's one of several sends behind one public call
         such as start_video()), so we don't also log this generic
         "name (cmd=... seq=...)" line on top of it.
+
+        track defaults to True: a CommandSample is recorded and, if/when
+        a matching response arrives, EVENT_SAMPLE_COMMAND_ACK fires (or
+        EVENT_SAMPLE_COMMAND_TIMEOUT if none ever does). Pass track=False for
+        commands that have their own separate response protocol and
+        shouldn't participate in this generic matching (e.g. the
+        calibration handshake, or us acking a received log header).
         """
         seq_num = self.__next_seq_num()
         pkt = Packet(cmd, pkt_type, payload)
         pkt.fixup(seq_num)
         if not quiet:
             log.info('%s (cmd=0x%02x seq=0x%04x)' % (name, cmd, seq_num))
-        return self.send_packet(pkt)
+        if not track:
+            return self.send_packet(pkt)
+        with self.__pending_sends_lock:
+            if self.send_packet(pkt):
+                sample = CommandSample(cmd, seq_num, name, pkt.timestamp, pkt.get_data())
+                self.__pending_sends[(cmd, seq_num)] = sample
+                return True
+            return False
+
+    def __evict_stale_pending_sends(self, now):
+        """Drop and report any pending sends older than COMMAND_ACK_TIMEOUT_SEC.
+
+        Called from __match_command_response(), which runs on every
+        received packet regardless of cmd, so eviction happens on a
+        steady cadence -- driven by whatever's arriving anyway (e.g.
+        FLIGHT_MSG at ~10Hz) -- regardless of whether any tracked
+        command is currently in flight.
+        """
+        evicted = []
+        with self.__pending_sends_lock:
+            while self.__pending_sends:
+                _, oldest = next(iter(self.__pending_sends.items()))
+                if now - oldest.send_time <= self.COMMAND_ACK_TIMEOUT_SEC:
+                    break
+                self.__pending_sends.popitem(last=False)
+                evicted.append(oldest)
+        for sample in evicted:
+            log.debug('command timed out: %s' % str(sample))
+            self.__publish(event=self.EVENT_SAMPLE_COMMAND_TIMEOUT, data=sample, recv_time=now)
+
+    def __match_command_response(self, cmd, seq_num, recv_time, ack_payload):
+        """Complete and publish the CommandSample for (cmd, seq_num), if any.
+
+        Called unconditionally for every received packet, regardless of
+        cmd -- a miss (the overwhelming majority of packets, e.g.
+        FLIGHT_MSG/LOG_DATA_MSG, whose cmd never appears as a key in
+        __pending_sends at all) just costs one dict lookup. This also
+        means eviction of stale pending sends piggybacks on whatever's
+        arriving anyway, on the same steady cadence, always before this
+        packet's own match is attempted -- so a response that arrives
+        late (e.g. after a multi-second Wi-Fi dropout) can't be matched
+        against an entry that should already have expired.
+
+        seq_num==0 is never matched: it means the packet wasn't numbered
+        by __next_seq_num() in the first place (e.g. built and fixup()'d
+        directly, outside of Tello), so there's nothing reliable to
+        match it against.
+        """
+        self.__evict_stale_pending_sends(recv_time)
+        if seq_num == 0:
+            return
+        with self.__pending_sends_lock:
+            sample = self.__pending_sends.pop((cmd, seq_num), None)
+        if sample is None:
+            return
+        sample.mark_acked(recv_time, ack_payload)
+        self.__publish(event=self.EVENT_SAMPLE_COMMAND_ACK, data=sample, recv_time=recv_time)
 
     def send_packet(self, pkt):
         """Send_packet is used to send a command packet to the drone."""
         try:
             cmd = pkt.get_buffer()
+            pkt.timestamp = monotonic()
             self.sock.sendto(cmd, self.tello_addr)
             log.debug("send_packet: %s" % byte_to_hexstring(cmd))
         except socket.error as err:
@@ -539,7 +613,7 @@ class Tello(object):
         pkt.fixup(self.__next_seq_num())
         return self.send_packet(pkt)
 
-    def __process_packet(self, data, recv_time=None):
+    def __process_packet(self, data, recv_time):
         if isinstance(data, str):
             data = bytearray([x for x in data])
 
@@ -562,6 +636,7 @@ class Tello(object):
 
         pkt = Packet(data)
         cmd = uint16(data[5], data[6])
+        self.__match_command_response(cmd, uint16(data[7], data[8]), recv_time, data[9:-2])
         if cmd == LOG_HEADER_MSG:
             id = uint16(data[9], data[10])
             log.info("recv: log_header: id=%04x, '%s'" % (id, str(data[28:54])))
