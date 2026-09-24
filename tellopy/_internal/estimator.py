@@ -45,13 +45,17 @@ class ClockSample(Sample):
     is that plus this packet's own delay). freq is in ticks per second and
     residual_std, in seconds, is how far the packets' arrival times scatter
     around the fit: the jitter, which the fit removes from event times.
+    rejected and resets are the clock's running totals of Samples left out of
+    the fit and of times it started over.
     """
-    def __init__(self, tick, recv_time, host_at_tick, freq, residual_std, n):
+    def __init__(self, tick, recv_time, host_at_tick, freq, residual_std, n, rejected=0, resets=0):
         super(ClockSample, self).__init__(event_time=recv_time, tick=tick, recv_time=recv_time)
         self.host_at_tick = host_at_tick
         self.freq = freq
         self.residual_std = residual_std
         self.n = n
+        self.rejected = rejected
+        self.resets = resets
 
 
 class TickClock(Estimator):
@@ -71,12 +75,33 @@ class TickClock(Estimator):
     line is taken to be wrong -- the clock jumped -- and the window starts over.
 
     The counter is 32 bits and wraps every ~30 minutes; it is unwrapped here.
+
+    A packet carries several records, all with the one arrival time but with
+    ticks that reach back some way; the older a record, the longer it has
+    waited to be sent, so its arrival time is worth less. Only the freshest
+    (highest tick) Sample of each packet is used, whichever Containers the
+    Samples came from, so that giving the clock more inputs does not shift it.
+    (Samples that share a recv_time are taken to be from one packet; the newest
+    packet is held back until the next one arrives.)
+
+    Starting up needs care: when a drone is connected to, the first Samples can be
+    stale -- old records from just after the drone booted, whose ticks are far
+    behind the counter's present value -- and fitting a line through those and the
+    real ones gives nonsense for as long as they stay in the window. So the clock
+    doesn't start until `min_samples` Samples agree with each other and with the
+    counter's known rate (`nominal_freq`) to within `warmup_tolerance` seconds; the
+    ones that don't are discarded. The same start-up follows a reset.
     """
     SAMPLE = ClockSample
 
     def __init__(self, *inputs, window=60.0, min_samples=30, reject_sigmas=5.0,
-                 reject_floor=0.005, max_consecutive_rejects=20, recenter_ticks=2e8):
+                 reject_floor=0.005, max_consecutive_rejects=20, recenter_ticks=2e8,
+                 nominal_freq=2344062.0, warmup_tolerance=0.5):
         super(TickClock, self).__init__(max_age=10.0)
+        self.nominal_freq = nominal_freq
+        self.warmup_tolerance = warmup_tolerance
+        self._candidates = []       # (unwrapped tick, recv_time) while starting up
+        self._started = False
         self.window = window
         self.min_samples = min_samples
         self.reject_sigmas = reject_sigmas
@@ -89,6 +114,8 @@ class TickClock(Estimator):
         self._last_tick = None      # the newest tick, and where it stands unwrapped
         self._last_unwrapped = None
         self._x0 = self._y0 = None  # origin of the points, kept near the newest one for precision
+        self._just_started = False
+        self._packet = None         # (unwrapped tick, recv_time, tick) of the freshest Sample of the newest packet
         self._points = collections.deque()
         self._sums = [0.0] * 5      # sum of x, y, x*x, x*y, y*y
         for container in inputs:
@@ -127,35 +154,49 @@ class TickClock(Estimator):
             return
         with self._lock:
             unwrapped = self._unwrap(sample.tick, commit=True)
-            if self._x0 is None:
-                self._x0, self._y0 = unwrapped, sample.recv_time
-            x, y = unwrapped - self._x0, sample.recv_time - self._y0
-            fit = self._fit()
-            if fit is not None and self.min_samples <= len(self._points):
-                slope, intercept, std = fit
-                if abs(y - (intercept + slope * x)) > self.reject_sigmas * max(std, self.reject_floor):
-                    self.rejected += 1
-                    self._consecutive_rejects += 1
-                    if self._consecutive_rejects < self.max_consecutive_rejects:
-                        return
-                    self._reset(unwrapped, sample.recv_time)
-                    x = y = 0.0
-            self._consecutive_rejects = 0
-            self._push(x, y)
-            while self.window < y - self._points[0][1]:
-                self._pop()
-            if self.recenter_ticks < x:
-                self._recenter(x, y)
-            clock_sample = None
-            fit = self._fit()
-            if fit is not None and self.min_samples <= len(self._points):
-                slope, intercept, std = fit
-                x, y = self._points[-1]
-                clock_sample = ClockSample(
-                    sample.tick, sample.recv_time, self._y0 + intercept + slope * x,
-                    1.0 / slope, std, len(self._points))
+            reading = self._packet          # the freshest Sample so far of the packet being read
+            if reading is not None and reading[1] == sample.recv_time:
+                if reading[0] < unwrapped:
+                    self._packet = (unwrapped, sample.recv_time, sample.tick)
+                return
+            self._packet = (unwrapped, sample.recv_time, sample.tick)
+            if reading is None:
+                return
+            clock_sample = self._take(*reading)
         if clock_sample is not None:
             self.add(clock_sample)
+
+    def _take(self, unwrapped, recv_time, tick):
+        """Fit one packet's freshest tick; the ClockSample to publish, if any."""
+        if not self._started:
+            if not self._start(unwrapped, recv_time):
+                return None
+        x, y = unwrapped - self._x0, recv_time - self._y0
+        fit = self._fit()
+        if fit is not None and self.min_samples <= len(self._points) and not self._just_started:
+            slope, intercept, std = fit
+            if abs(y - (intercept + slope * x)) > self.reject_sigmas * max(std, self.reject_floor):
+                self.rejected += 1
+                self._consecutive_rejects += 1
+                if self._consecutive_rejects < self.max_consecutive_rejects:
+                    return None
+                self._reset(unwrapped, recv_time)
+                return None
+        if not self._just_started:
+            self._push(x, y)
+        self._just_started = False
+        self._consecutive_rejects = 0
+        while self.window < y - self._points[0][1]:
+            self._pop()
+        if self.recenter_ticks < x:
+            self._recenter(x, y)
+        fit = self._fit()
+        if fit is None or len(self._points) < self.min_samples:
+            return None
+        slope, intercept, std = fit
+        x, y = self._points[-1]
+        return ClockSample(tick, recv_time, self._y0 + intercept + slope * x,
+                           1.0 / slope, std, len(self._points), self.rejected, self.resets)
 
     # -- the fit -----------------------------------------------------------
 
@@ -185,7 +226,30 @@ class TickClock(Estimator):
         self.resets += 1
         self._points.clear()
         self._sums = [0.0] * 5
-        self._x0, self._y0 = unwrapped, recv_time
+        self._started = False
+        self._candidates = [(unwrapped, recv_time)]
+        self._consecutive_rejects = 0
+
+    def _start(self, unwrapped, recv_time):
+        """Take a candidate; True once enough of them agree that the clock has started."""
+        self._candidates.append((unwrapped, recv_time))
+        if len(self._candidates) < self.min_samples:
+            return False
+        # each candidate implies when the counter read zero, if it ran at its nominal rate;
+        # the real ones agree on that, a stale one is off by however stale it is
+        implied = [y - x / self.nominal_freq for x, y in self._candidates]
+        middle = statistics.median(implied)
+        agreeing = [c for c, i in zip(self._candidates, implied) if abs(i - middle) <= self.warmup_tolerance]
+        if len(agreeing) < self.min_samples:
+            del self._candidates[:-4 * self.min_samples]    # keep looking, but not for ever
+            return False
+        self._x0, self._y0 = agreeing[0]
+        for x, y in agreeing:
+            self._push(x - self._x0, y - self._y0)
+        self._candidates = []
+        self._started = True
+        self._just_started = True
+        return True
 
     def _recenter(self, dx, dy):
         """Move the origin to the newest point, so numbers stay small however long this runs."""
