@@ -55,3 +55,26 @@ class CommandSample(Sample):
             return '%s (cmd=0x%04x seq=0x%04x rtt=%.1fms)' % (
                 self.name, self.cmd, self.seq, self.rtt * 1000.0)
         return '%s (cmd=0x%04x seq=0x%04x, unacked)' % (self.name, self.cmd, self.seq)
+
+
+class StickSample(Sample):
+    """A stick command as it went out: where the four axes (each -1..1)
+    and the fast-mode switch were when the packet was sent.
+
+    event_time is the moment of sending, on the same clock as
+    CommandSample.send_time. The stick command is sent continuously and the
+    drone never answers it, so there is nothing to wait for: it is
+    published right after sending, with no tick and no recv_time.
+    """
+    def __init__(self, send_time, roll, pitch, throttle, yaw, fast_mode):
+        super(StickSample, self).__init__(event_time=send_time, tick=None)
+        self.send_time = send_time
+        self.roll = roll
+        self.pitch = pitch
+        self.throttle = throttle
+        self.yaw = yaw
+        self.fast_mode = fast_mode
+
+    def __str__(self):
+        return 'stick (roll=%.2f pitch=%.2f throttle=%.2f yaw=%.2f%s)' % (
+            self.roll, self.pitch, self.throttle, self.yaw, ' fast' if self.fast_mode else '')

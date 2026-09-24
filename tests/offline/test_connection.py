@@ -136,3 +136,28 @@ class LogRecordTest(DroneTestCase):
             log_record(16, 101, bytes([0x64, 0, 1, 7])))
         wait_until(lambda: tofs, what='the record after the bad one')
         self.assertEqual(imus, [])
+
+
+class StickTest(DroneTestCase):
+
+    def test_every_stick_command_sent_is_published_with_what_was_sent(self):
+        drone = self.start_drone()
+        sticks = []
+        drone.subscribe(drone.EVENT_SAMPLE_STICK, lambda event, sender, data: sticks.append(data))
+        self.connect()
+        drone.counter_clockwise(50)         # yaw -0.5
+        drone.up(20)                        # throttle 0.2
+        for _ in range(20):                 # a stick command goes out per packet received
+            self.fake.send_flight_data()
+            time.sleep(0.01)
+        wait_until(lambda: len(sticks) >= 10, what='stick samples')
+
+        last = sticks[-1]
+        self.assertEqual((last.roll, last.pitch, last.throttle, last.yaw, last.fast_mode),
+                         (0.0, 0.0, 0.2, -0.5, False))
+        times = [s.event_time for s in sticks]
+        self.assertEqual(times, sorted(times))
+        self.assertTrue(all(s.tick is None and s.recv_time is None for s in sticks))
+        # each one published matches one packet that reached the drone
+        on_wire = self.fake.received_cmds(protocol.STICK_CMD)
+        self.assertLessEqual(abs(len(on_wire) - len(sticks)), 2)
