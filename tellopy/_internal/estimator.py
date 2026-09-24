@@ -283,14 +283,15 @@ class TickClock(Estimator):
 
 
 class LagSample(Sample):
-    """How long the gyro took to respond to one yaw command.
+    """How long a sensor took to respond to one stick command.
 
-    event_time is when the command went out. onset and midpoint are the
-    seconds from then until the gyro reached 10% and 50% of its peak
-    response; peak (rad/s, signed like the gyro) and noise (the gyro's
-    scatter while still) say how clear that response was.
+    event_time is when the command went out; axis is which stick it was
+    (yaw, roll, pitch). onset and midpoint are the seconds from then until
+    the sensor signal reached 10% and 50% of its peak response; peak (signed
+    like the signal) and noise (its scatter while still) say how clear that
+    response was.
     """
-    def __init__(self, command_time, command, onset, midpoint, peak, noise):
+    def __init__(self, command_time, command, onset, midpoint, peak, noise, axis='yaw'):
         super(LagSample, self).__init__(event_time=command_time)
         self.command_time = command_time
         self.command = command
@@ -298,10 +299,20 @@ class LagSample(Sample):
         self.midpoint = midpoint
         self.peak = peak
         self.noise = noise
+        self.axis = axis
 
     def __str__(self):
-        return 'yaw %+.2f at %.3f: onset %.0f ms, midpoint %.0f ms (peak %+.2f, noise %.3f)' % (
-            self.command, self.command_time, self.onset * 1e3, self.midpoint * 1e3, self.peak, self.noise)
+        return '%s %+.2f at %.3f: onset %.0f ms, midpoint %.0f ms (peak %+.2f, noise %.3f)' % (
+            self.axis, self.command, self.command_time, self.onset * 1e3, self.midpoint * 1e3,
+            self.peak, self.noise)
+
+
+def tilt_angle(imu, axis):
+    """The roll or pitch angle (radians) of a LogImuAtti, from its quaternion (w, x, y, z)."""
+    w, x, y, z = imu.q0, imu.q1, imu.q2, imu.q3
+    if axis == 'roll':
+        return math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+    return math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))
 
 
 def _percentile(values, p):
@@ -323,33 +334,50 @@ class _Pulse(object):
 
 
 class ResponseLagEstimator(Estimator):
-    """How long after a yaw command does the gyro respond?
+    """How long after a stick command does the drone's response show in a sensor?
 
-    Watches the stick commands for a yaw command that starts from rest --
-    the stick centred for at least `quiet` seconds before -- and the gyro
-    after it. Once the command is over (or `hold` seconds have passed) and
-    the gyro has settled, it looks for when the gyro rose to 10% and to 50%
-    of its peak, and reports the times since the command went out as a LagSample.
+    Watches the stick commands for one on `axis` that starts from rest --
+    the stick centred for at least `quiet` seconds before -- and a sensor
+    signal after it. Once the command is over (or `hold` seconds have passed)
+    and the signal has settled, it looks for when the signal rose to 10% and
+    to 50% of its peak, and reports the times since the command went out as a LagSample.
     A pulse that doesn't give a clear answer is skipped, and counted in
     `skipped` by the reason -- among them a gap in the gyro's readings
     (packets do get lost) longer than `max_gap` at the moment of the
     response, since a line drawn across a gap says nothing about when
     the response began.
 
-    sticks and gyros are Containers, clock a TickClock: the gyro's Samples are
-    put on the host clock with it, the command's are already on it. gyros
-    can hold LogGyro (one of its three stages, `stage`) or LogImuAtti.
+    sticks and source are Containers, clock a TickClock: the source's Samples
+    are put on the host clock with it, the command's are already on it. What
+    signal is watched depends on the axis, unless `signal` (a function of one
+    Sample, giving a number) says otherwise:
 
-    What comes out is the lag of that gyro signal behind the command:
-    the drone's response and the time the reading takes to reach us
-    together, with the command's own trip in front.
+      yaw     the yaw rate: a LogGyro's `stage` (of its three) or a LogImuAtti's gyro
+      roll    the roll angle, from a LogImuAtti's quaternion
+      pitch   the pitch angle, likewise
+
+    The angles answer more slowly than the rate: the 50% point comes some 260-300 ms
+    after the command, against about 100 ms for the yaw rate. There is no default
+    for throttle; none of the signals tried follows it cleanly.
+
+    What comes out is the lag of that signal behind the command: the drone's
+    response and the time the reading takes to reach us together, with the
+    command's own trip in front.
     """
     SAMPLE = LagSample
+    # the least peak (rad/s for yaw, rad for the angles) that counts as a response
+    MIN_PEAK = {'yaw': 0.2, 'roll': 0.03, 'pitch': 0.03}
 
-    def __init__(self, sticks, gyros, clock, stage=0, history=20, quiet=1.0,
+    def __init__(self, sticks, source, clock, axis='yaw', stage=0, signal=None, history=20, quiet=1.0,
                  command_threshold=0.15, release_threshold=0.05, hold=3.0, settle=0.3,
-                 min_peak=0.2, min_snr=6.0, max_lag=0.8, max_gap=0.15):
+                 min_peak=None, min_snr=6.0, max_lag=0.8, max_gap=0.15):
         super(ResponseLagEstimator, self).__init__(max_age=600.0)
+        if signal is None and axis not in self.MIN_PEAK:
+            raise ValueError('no default signal for the %s axis; pass signal=' % axis)
+        self.axis = axis
+        self._signal = signal or self._default_signal
+        if min_peak is None:
+            min_peak = self.MIN_PEAK.get(axis, 0.0)
         self.clock = clock
         self.stage = stage
         self.quiet = quiet
@@ -363,11 +391,16 @@ class ResponseLagEstimator(Estimator):
         self.max_gap = max_gap
         self.skipped = collections.Counter()
         self._recent = collections.deque(maxlen=history)
-        self._gyro = collections.deque()        # (host time, yaw rate)
+        self._gyro = collections.deque()        # (host time, the signal's value)
         self._pulse = None
         self._quiet_since = None
         self.listen(sticks, self.on_stick)
-        self.listen(gyros, self.on_gyro)
+        self.listen(source, self.on_source)
+
+    def _default_signal(self, sample):
+        if self.axis == 'yaw':
+            return sample.stages[self.stage][2] if isinstance(sample, LogGyro) else sample.gyro_z
+        return tilt_angle(sample, self.axis)
 
     # -- what it says ------------------------------------------------------
 
@@ -390,7 +423,7 @@ class ResponseLagEstimator(Estimator):
     # -- taking Samples in -------------------------------------------------
 
     def on_stick(self, sample):
-        yaw, t = sample.yaw, sample.event_time
+        yaw, t = getattr(sample, self.axis), sample.event_time
         with self._lock:
             pulse = self._pulse
             if pulse is None:
@@ -412,12 +445,12 @@ class ResponseLagEstimator(Estimator):
                 self._pulse = None
                 self._quiet_since = None
 
-    def on_gyro(self, sample):
+    def on_source(self, sample):
         try:
             t = self.clock.host_time(sample.tick)
         except LookupError:
             return                                  # the clock is not ready yet
-        rate = sample.stages[self.stage][2] if isinstance(sample, LogGyro) else sample.gyro_z
+        rate = self._signal(sample)
         lag_sample = None
         with self._lock:
             self._gyro.append((t, rate))
@@ -441,13 +474,13 @@ class ResponseLagEstimator(Estimator):
         gyro = sorted(self._gyro)       # by time: packets can arrive out of order
         rest = [rate for t, rate in gyro if t_cmd - 0.8 <= t <= t_cmd - 0.1]
         if len(rest) < 3:
-            return self._skip('no gyro before the command')
+            return self._skip('no signal before the command')
         base = statistics.median(rest)
         noise = 1.4826 * statistics.median(abs(rate - base) for rate in rest)
         response = [(t, rate - base) for t, rate in gyro if t_cmd - 0.3 <= t <= end + self.settle]
         during = [(t, delta) for t, delta in response if t_cmd <= t]
         if len(during) < 5:
-            return self._skip('too few gyro samples')
+            return self._skip('too few readings')
         sign = 1 if max(during, key=lambda point: abs(point[1]))[1] > 0 else -1
         peak = _percentile([abs(delta) for _, delta in during], 85)
         if peak < self.min_peak or peak < self.min_snr * noise:
@@ -463,7 +496,7 @@ class ResponseLagEstimator(Estimator):
             lags.append(when - t_cmd)
         if not all(-0.05 <= lag <= self.max_lag for lag in lags):
             return self._skip('implausible lag')
-        return LagSample(t_cmd, pulse.command, lags[0], lags[1], sign * peak, noise)
+        return LagSample(t_cmd, pulse.command, lags[0], lags[1], sign * peak, noise, self.axis)
 
     def _skip(self, reason):
         self.skipped[reason] += 1
