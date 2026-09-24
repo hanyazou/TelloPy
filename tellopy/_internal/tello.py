@@ -20,7 +20,7 @@ from . import video_stream
 from . utils import *
 from . protocol import *
 from . import dispatcher
-from . sample import CommandSample
+from . sample import CommandSample, StickSample
 
 log = logger.Logger('Tello')
 
@@ -43,6 +43,9 @@ class Tello(object):
     EVENT_CALIBRATION_STATUS = event.Event('calibration_status')
     EVENT_SAMPLE_COMMAND_ACK = event.Event('sample_command_ack')
     EVENT_SAMPLE_COMMAND_TIMEOUT = event.Event('sample_command_timeout')
+    # Each stick command as it goes out (data is a StickSample). It is never
+    # answered, so unlike the two above there is no ack/timeout to wait for.
+    EVENT_SAMPLE_STICK = event.Event('sample_stick')
     # One per record in a log data message; data is the decoded LogRecord
     # (a LogImuAtti for EVENT_SAMPLE_IMU, and so on).
     EVENT_SAMPLE_IMU = event.Event('sample_imu')
@@ -189,6 +192,10 @@ class Tello(object):
     def subscribe(self, signal, handler):
         """Subscribe a event such as EVENT_CONNECTED, EVENT_FLIGHT_DATA, EVENT_VIDEO_FRAME and so on."""
         dispatcher.connect(handler, signal)
+
+    def unsubscribe(self, signal, handler):
+        """Undo subscribe()."""
+        dispatcher.disconnect(handler, signal)
 
     def __publish(self, event, *, recv_time, data=None, **args):
         args.update({'data': data, 'recv_time': recv_time})
@@ -473,11 +480,15 @@ class Tello(object):
     def __send_stick_command(self):
         pkt = Packet(STICK_CMD, 0x60)
 
-        axis1 = int(1024 + 660.0 * self.right_x) & 0x7ff
-        axis2 = int(1024 + 660.0 * self.right_y) & 0x7ff
-        axis3 = int(1024 + 660.0 * self.left_y) & 0x7ff
-        axis4 = int(1024 + 660.0 * self.left_x) & 0x7ff
-        axis5 = int(self.fast_mode) & 0x01        
+        # the sticks can be moved from another thread at any time; take one
+        # consistent look at them
+        right_x, right_y, left_y, left_x, fast_mode = (
+            self.right_x, self.right_y, self.left_y, self.left_x, self.fast_mode)
+        axis1 = int(1024 + 660.0 * right_x) & 0x7ff
+        axis2 = int(1024 + 660.0 * right_y) & 0x7ff
+        axis3 = int(1024 + 660.0 * left_y) & 0x7ff
+        axis4 = int(1024 + 660.0 * left_x) & 0x7ff
+        axis5 = int(fast_mode) & 0x01
         '''
         11 bits (-1024 ~ +1023) x 4 axis = 44 bits
         fast_mode takes 1 bit        
@@ -506,7 +517,11 @@ class Tello(object):
         pkt.add_time()
         pkt.fixup(self.__next_seq_num())
         log.debug("stick command: %s" % byte_to_hexstring(pkt.get_buffer()))
-        return self.send_packet(pkt)
+        if not self.send_packet(pkt):
+            return False
+        self.__publish(event=self.EVENT_SAMPLE_STICK, recv_time=None, data=StickSample(
+            pkt.timestamp, roll=right_x, pitch=right_y, throttle=left_y, yaw=left_x, fast_mode=fast_mode))
+        return True
 
     def __send_ack_log(self, id):
         b0, b1 = le16(id)

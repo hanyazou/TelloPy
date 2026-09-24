@@ -7,6 +7,7 @@ and all of them must get every event.
 """
 from tellopy import Tello
 from tellopy._internal import protocol
+from tellopy._internal.sample import StickSample
 
 from .fake_drone import log_record
 from .harness import DroneTestCase, wait_until
@@ -30,6 +31,7 @@ EXERCISED = {
     'EVENT_CALIBRATION_STATUS': protocol.CalibrationStatus,
     'EVENT_SAMPLE_COMMAND_ACK': None,
     'EVENT_SAMPLE_COMMAND_TIMEOUT': None,
+    'EVENT_SAMPLE_STICK': StickSample,
     'EVENT_SAMPLE_IMU': protocol.LogImuAtti,
     'EVENT_SAMPLE_GYRO': protocol.LogGyro,
     'EVENT_SAMPLE_TOF': protocol.LogTof,
@@ -37,6 +39,9 @@ EXERCISED = {
     'EVENT_SAMPLE_CONTROL': protocol.LogControl,
     'EVENT_SAMPLE_RAW': protocol.LogRecord,
 }
+
+# Events that don't come from a received packet, so their recv_time is None.
+NOT_FROM_A_PACKET = ('EVENT_DISCONNECTED', 'EVENT_SAMPLE_STICK')
 
 # Public events this test does not (yet) make happen. Adding an event to
 # Tello without listing it in one of these two places fails the test below,
@@ -143,8 +148,8 @@ class EventContractTest(DroneTestCase):
             self.assertEqual(len(narrow), len(wide), name)
             self.assertEqual(len(narrow), len(catch_all), name)
             for _, data, recv_time in wide:
-                if name == 'EVENT_DISCONNECTED':
-                    self.assertIsNone(recv_time, name)      # not caused by a received packet
+                if name in NOT_FROM_A_PACKET:
+                    self.assertIsNone(recv_time, name)
                 else:
                     self.assertIsInstance(recv_time, float, name)
                 if data_type is not None:
