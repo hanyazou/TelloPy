@@ -2,3 +2,4 @@
 build/
 dist/
 tellopy.egg-info/
+**/.DS_Store
