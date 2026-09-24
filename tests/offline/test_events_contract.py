@@ -28,6 +28,8 @@ EXERCISED = {
     'EVENT_VIDEO_FRAME': None,
     'EVENT_VIDEO_DATA': None,
     'EVENT_CALIBRATION_STATUS': protocol.CalibrationStatus,
+    'EVENT_SAMPLE_COMMAND_ACK': None,
+    'EVENT_SAMPLE_COMMAND_TIMEOUT': None,
 }
 
 # Public events this test does not (yet) make happen. Adding an event to
@@ -91,6 +93,9 @@ class EventContractTest(DroneTestCase):
 
         self.connect()
         wait_until(lambda: seen('EVENT_TIME'), what='EVENT_TIME (the reply to our time command)')
+        drone.takeoff()
+        wait_until(lambda: seen('EVENT_SAMPLE_COMMAND_ACK'), what='EVENT_SAMPLE_COMMAND_ACK')
+
         drone.start_video()
         self.fake.send_video(0, 0, b'frame')
         self.fake.send_wifi()
@@ -106,6 +111,17 @@ class EventContractTest(DroneTestCase):
             log_record(29, 1003, bytes(80)),
             log_record(1306, 1004, bytes(22)),
             log_record(4242, 1005, bytes(8)))       # an id nothing decodes
+
+        # A command nobody answers is reported as timed out, but only when
+        # more packets arrive to drive the check, as they do from a real drone.
+        self.fake.ack_enabled = False
+        drone.COMMAND_ACK_TIMEOUT_SEC = 0.2
+        drone.land()
+
+        def keep_the_check_running():
+            self.fake.send_flight_data()
+            return seen('EVENT_SAMPLE_COMMAND_TIMEOUT')
+        wait_until(keep_the_check_running, what='EVENT_SAMPLE_COMMAND_TIMEOUT')
 
         for name in EXERCISED:
             if name != 'EVENT_DISCONNECTED':
