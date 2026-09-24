@@ -4,6 +4,7 @@ from io import BytesIO
 
 from . import crc
 from . utils import *
+from . sample import Sample
 
 # low-level Protocol (https://tellopilots.com/wiki/protocol/#MessageIDs)
 START_OF_PACKET                     = 0xcc
@@ -322,15 +323,238 @@ class VideoData(object):
         return loss
 
 
+class LogRecord(Sample):
+    """One record of a log data message (cmd 0x1051).
+
+    tick is the device counter the record carries, and recv_time is when
+    the message that held it arrived. event_time is provisional, set to
+    recv_time: the best the library alone can say, and only an upper
+    bound on when the measurement was actually taken. A better estimate
+    needs a tick-to-host-time model, which lives outside the library.
+
+    Records whose id has no dedicated subclass are represented by this
+    class as-is (record_id says which). payload is kept on every record,
+    decoded or not, so fields identified later can be decoded from a
+    capture without having to record it again.
+
+    LogData makes a fresh record for every message it parses, rather than
+    updating one in place, so a record that has been published never
+    changes afterwards.
+    """
+    ID = None
+
+    def __init__(self, log = None, data = None):
+        super(LogRecord, self).__init__(event_time=None, tick=0, recv_time=None)
+        self.log = log
+        self.count = 0
+        self.record_id = self.ID
+        self.payload = b''
+        if (data != None):
+            self.update(data)
+
+    def __str__(self):
+        return "RECORD: %s TICK: %d" % (self.record_id, self.tick)
+
+    def update(self, data, count = 0, tick = 0, recv_time = None):
+        self.count = count
+        self.tick = tick
+        self.recv_time = recv_time
+        self.event_time = recv_time
+        self.payload = bytes(data)
+        self.decode(data)
+
+    def decode(self, data):
+        """Fill in this record's fields from its payload; nothing to
+        decode for a record we don't know yet."""
+        pass
+
+
+class LogNewMvoFeedback(LogRecord):
+    ID = 29
+
+    def __init__(self, log = None, data = None):
+        self.vel_x = 0.0
+        self.vel_y = 0.0
+        self.vel_z = 0.0
+        self.pos_x = 0.0
+        self.pos_y = 0.0
+        self.pos_z = 0.0
+        super(LogNewMvoFeedback, self).__init__(log, data)
+
+    def __str__(self):
+        return (
+            ("TICK: %d" % self.tick) +
+            (" VEL: %5.2f %5.2f %5.2f" % (self.vel_x, self.vel_y, self.vel_z))+
+            (" POS: %5.2f %5.2f %5.2f" % (self.pos_x, self.pos_y, self.pos_z))+
+            "")
+
+    def format_cvs(self):
+        return (
+            ("%d" % self.tick) +
+            (",%f,%f,%f" % (self.vel_x, self.vel_y, self.vel_z))+
+            (",%f,%f,%f" % (self.pos_x, self.pos_y, self.pos_z))+
+            "")
+
+    def format_cvs_header(self):
+        return (
+            "mvo.tick" +
+            ",mvo.vel_x,mvo.vel_y,mvo.vel_z" +
+            ",mvo.pos_x,mvo.pos_y,mvo.pos_z" +
+            "")
+
+    def decode(self, data):
+        self.log.debug('LogNewMvoFeedback: length=%d %s' % (len(data), byte_to_hexstring(data)))
+        (self.vel_x, self.vel_y, self.vel_z) = struct.unpack_from('<hhh', data, 2)
+        self.vel_x /= 100.0
+        self.vel_y /= 100.0
+        self.vel_z /= 100.0
+        (self.pos_x, self.pos_y, self.pos_z) = struct.unpack_from('fff', data, 8)
+        self.log.debug('LogNewMvoFeedback: ' + str(self))
+
+
+class LogImuAtti(LogRecord):
+    ID = 2048
+
+    def __init__(self, log = None, data = None):
+        self.acc_x = 0.0
+        self.acc_y = 0.0
+        self.acc_z = 0.0
+        self.gyro_x = 0.0
+        self.gyro_y = 0.0
+        self.gyro_z = 0.0
+        self.q0 = 0.0
+        self.q1 = 0.0
+        self.q2 = 0.0
+        self.q3 = 0.0
+        # World-frame, gravity-compensated linear acceleration in m/s^2
+        # (correlates 0.95-0.98 with the quaternion-rotated acc).
+        self.lin_acc_x = 0.0
+        self.lin_acc_y = 0.0
+        self.lin_acc_z = 0.0
+        # Not identified; the name is just what it has always been called.
+        self.vg_x = 0.0
+        self.vg_y = 0.0
+        self.vg_z = 0.0
+        super(LogImuAtti, self).__init__(log, data)
+
+    def __str__(self):
+        return (
+            ("TICK: %d" % self.tick) +
+            (" ACC: %5.2f %5.2f %5.2f" % (self.acc_x, self.acc_y, self.acc_z)) +
+            (" GYRO: %5.2f %5.2f %5.2f" % (self.gyro_x, self.gyro_y, self.gyro_z)) +
+            (" QUATERNION: %5.2f %5.2f %5.2f %5.2f" % (self.q0, self.q1, self.q2, self.q3)) +
+            (" VG: %5.2f %5.2f %5.2f" % (self.vg_x, self.vg_y, self.vg_z)) +
+            "")
+
+    def format_cvs(self):
+        return (
+            ("%d" % self.tick) +
+            (",%f,%f,%f" % (self.acc_x, self.acc_y, self.acc_z)) +
+            (",%f,%f,%f" % (self.gyro_x, self.gyro_y, self.gyro_z)) +
+            (",%f,%f,%f,%f" % (self.q0, self.q1, self.q2, self.q3)) +
+            (",%f,%f,%f" % (self.vg_x, self.vg_y, self.vg_z)) +
+            "")
+
+    def format_cvs_header(self):
+        return (
+            "imu.tick" +
+            ",imu.acc_x,imu.acc_y,imu.acc_z" +
+            ",imu.gyro_x,imu.gyro_y,imu.gyro_z" +
+            ",imu.q0,imu.q1,imu.q2, self.q3" +
+            ",imu.vg_x,imu.vg_y,imu.vg_z" +
+            "")
+
+    def decode(self, data):
+        self.log.debug('LogImuAtti: length=%d %s' % (len(data), byte_to_hexstring(data)))
+        (self.acc_x, self.acc_y, self.acc_z) = struct.unpack_from('fff', data, 20)
+        (self.gyro_x, self.gyro_y, self.gyro_z) = struct.unpack_from('fff', data, 32)
+        (self.q0, self.q1, self.q2, self.q3) = struct.unpack_from('ffff', data, 48)
+        (self.lin_acc_x, self.lin_acc_y, self.lin_acc_z) = struct.unpack_from('fff', data, 64)
+        (self.vg_x, self.vg_y, self.vg_z) = struct.unpack_from('fff', data, 76)
+        self.log.debug('LogImuAtti: ' + str(self))
+
+
+class LogGyro(LogRecord):
+    """Three pipeline stages of 3-axis gyroscope readings (~20Hz).
+
+    Each stage tracks LogImuAtti's gyro closely (z: corr 0.96-0.99) but
+    they lead/lag one another by up to a few tens of ms. Which stage is
+    rawest is not known, hence the neutral stages[0..2]. x/y are only
+    weakly correlated with LogImuAtti's gyro (small signals, mostly
+    noise), so the x/y/z order within a stage is inferred from the z
+    offsets.
+    """
+    ID = 1305
+
+    def __init__(self, log = None, data = None):
+        self.stages = ((0.0, 0.0, 0.0),) * 3
+        super(LogGyro, self).__init__(log, data)
+
+    def decode(self, data):
+        self.stages = tuple(struct.unpack_from('<3f', data, off) for off in (1, 13, 25))
+
+
+class LogTof(LogRecord):
+    """Raw, uncompensated time-of-flight distance sensor (~5Hz)."""
+    ID = 16
+
+    def __init__(self, log = None, data = None):
+        self.distance = 0       # unit not confirmed
+        self.flag = 0           # only ever seen as 1
+        self.counter = 0        # advances by 4 per record, wraps at 256
+        super(LogTof, self).__init__(log, data)
+
+    def decode(self, data):
+        (self.distance, self.flag, self.counter) = struct.unpack_from('<hBB', data, 0)
+
+
+class LogControl(LogRecord):
+    """Internal flight controller quantities (~20Hz).
+
+    cols holds all eight int16 columns. Per docs/sensor_time.md, column 0
+    and 2 are the roll and yaw control errors, column 3 is throttle
+    output, and column 1 (a pitch candidate) is unconfirmed. Column 4 is
+    a copy of column 0 (identical in 99.9% of the records of the one
+    capture checked); 5-7 are unidentified.
+    """
+    ID = 1306
+
+    def __init__(self, log = None, data = None):
+        self.cols = (0,) * 8
+        super(LogControl, self).__init__(log, data)
+
+    def decode(self, data):
+        self.cols = struct.unpack_from('<8h', data, 6)
+
+    @property
+    def roll_err(self):
+        return self.cols[0]
+
+    @property
+    def yaw_err(self):
+        return self.cols[2]
+
+    @property
+    def throttle(self):
+        return self.cols[3]
+
+
 class LogData(object):
-    ID_NEW_MVO_FEEDBACK                = 29
-    ID_IMU_ATTI                        = 2048
+    ID_NEW_MVO_FEEDBACK                = LogNewMvoFeedback.ID
+    ID_IMU_ATTI                        = LogImuAtti.ID
+    RECORD_CLASSES = dict((cls.ID, cls) for cls in (
+        LogNewMvoFeedback, LogImuAtti, LogGyro, LogTof, LogControl))
     unknowns = []
 
     def __init__(self, log, data = None):
         self.log = log
         self.count = 0
         self.recv_time = 0.0
+        # Every record the last update() parsed, in order (a fresh object
+        # each; see LogRecord). If update() raised partway, this still
+        # holds the records that were fine before the corrupt spot.
+        self.records = []
+        # The most recent record of each kind seen so far, across messages.
         self.mvo = LogNewMvoFeedback(log)
         self.imu = LogImuAtti(log)
         if data:
@@ -363,6 +587,7 @@ class LogData(object):
             self.recv_time = recv_time
         self.log.debug('LogData: data length=%d' % len(data))
         self.count += 1
+        self.records = []
         pos = 0
         while (pos < len(data) - 2):
             if (struct.unpack_from('B', data, pos+0)[0] != 0x55):
@@ -380,122 +605,29 @@ class LogData(object):
                 payload = bytearray([ord(x) ^ ord(xorval) for x in data[pos+10:pos+10+length-12]])
             else:
                 payload = bytearray([x ^ xorval for x in data[pos+10:pos+10+length-12]])
-            if id == self.ID_NEW_MVO_FEEDBACK:
-                self.mvo.update(payload, self.count, tick)
-            elif id == self.ID_IMU_ATTI:
-                self.imu.update(payload, self.count, tick)
-            else:
+            cls = self.RECORD_CLASSES.get(id)
+            if cls is None:
                 if not id in self.unknowns:
                     self.log.info('LogData: UNHANDLED LOG DATA: id=%5d, length=%4d' % (id, length-12))
                     self.unknowns.append(id)
+                record = LogRecord(self.log)
+                record.record_id = id
+            else:
+                record = cls(self.log)
+            try:
+                record.update(payload, self.count, tick, self.recv_time)
+            except struct.error as ex:
+                # A record shorter than its decoder expects; drop just
+                # this one so the rest of the message still gets through.
+                self.log.info('LogData: bad record id=%d: %s' % (id, str(ex)))
+            else:
+                self.records.append(record)
+                if id == self.ID_NEW_MVO_FEEDBACK:
+                    self.mvo = record
+                elif id == self.ID_IMU_ATTI:
+                    self.imu = record
 
             pos += length
         if pos != len(data) - 2:
             raise Exception('LogData: corrupted data at pos=%d, data=%s'
                             % (pos, byte_to_hexstring(data[pos:])))
-
-
-class LogNewMvoFeedback(object):
-    def __init__(self, log = None, data = None):
-        self.log = log
-        self.count = 0
-        self.tick = 0
-        self.vel_x = 0.0
-        self.vel_y = 0.0
-        self.vel_z = 0.0
-        self.pos_x = 0.0
-        self.pos_y = 0.0
-        self.pos_z = 0.0
-        if (data != None):
-            self.update(data, count)
-
-    def __str__(self):
-        return (
-            ("TICK: %d" % self.tick) +
-            (" VEL: %5.2f %5.2f %5.2f" % (self.vel_x, self.vel_y, self.vel_z))+
-            (" POS: %5.2f %5.2f %5.2f" % (self.pos_x, self.pos_y, self.pos_z))+
-            "")
-
-    def format_cvs(self):
-        return (
-            ("%d" % self.tick) +
-            (",%f,%f,%f" % (self.vel_x, self.vel_y, self.vel_z))+
-            (",%f,%f,%f" % (self.pos_x, self.pos_y, self.pos_z))+
-            "")
-
-    def format_cvs_header(self):
-        return (
-            "mvo.tick" +
-            ",mvo.vel_x,mvo.vel_y,mvo.vel_z" +
-            ",mvo.pos_x,mvo.pos_y,mvo.pos_z" +
-            "")
-
-    def update(self, data, count = 0, tick = 0):
-        self.log.debug('LogNewMvoFeedback: length=%d %s' % (len(data), byte_to_hexstring(data)))
-        self.count = count
-        self.tick = tick
-        (self.vel_x, self.vel_y, self.vel_z) = struct.unpack_from('<hhh', data, 2)
-        self.vel_x /= 100.0
-        self.vel_y /= 100.0
-        self.vel_z /= 100.0
-        (self.pos_x, self.pos_y, self.pos_z) = struct.unpack_from('fff', data, 8)
-        self.log.debug('LogNewMvoFeedback: ' + str(self))
-
-
-class LogImuAtti(object):
-    def __init__(self, log = None, data = None):
-        self.log = log
-        self.count = 0
-        self.tick = 0
-        self.acc_x = 0.0
-        self.acc_y = 0.0
-        self.acc_z = 0.0
-        self.gyro_x = 0.0
-        self.gyro_y = 0.0
-        self.gyro_z = 0.0
-        self.q0 = 0.0
-        self.q1 = 0.0
-        self.q2 = 0.0
-        self.q3 = 0.0
-        self.vg_x = 0.0
-        self.vg_y = 0.0
-        self.vg_z = 0.0
-        if (data != None):
-            self.update(data)
-
-    def __str__(self):
-        return (
-            ("TICK: %d" % self.tick) +
-            (" ACC: %5.2f %5.2f %5.2f" % (self.acc_x, self.acc_y, self.acc_z)) +
-            (" GYRO: %5.2f %5.2f %5.2f" % (self.gyro_x, self.gyro_y, self.gyro_z)) +
-            (" QUATERNION: %5.2f %5.2f %5.2f %5.2f" % (self.q0, self.q1, self.q2, self.q3)) +
-            (" VG: %5.2f %5.2f %5.2f" % (self.vg_x, self.vg_y, self.vg_z)) +
-            "")
-
-    def format_cvs(self):
-        return (
-            ("%d" % self.tick) +
-            (",%f,%f,%f" % (self.acc_x, self.acc_y, self.acc_z)) +
-            (",%f,%f,%f" % (self.gyro_x, self.gyro_y, self.gyro_z)) +
-            (",%f,%f,%f,%f" % (self.q0, self.q1, self.q2, self.q3)) +
-            (",%f,%f,%f" % (self.vg_x, self.vg_y, self.vg_z)) +
-            "")
-
-    def format_cvs_header(self):
-        return (
-            "imu.tick" +
-            ",imu.acc_x,imu.acc_y,imu.acc_z" +
-            ",imu.gyro_x,imu.gyro_y,imu.gyro_z" +
-            ",imu.q0,imu.q1,imu.q2, self.q3" +
-            ",imu.vg_x,imu.vg_y,imu.vg_z" +
-            "")
-
-    def update(self, data, count = 0, tick = 0):
-        self.log.debug('LogImuAtti: length=%d %s' % (len(data), byte_to_hexstring(data)))
-        self.count = count
-        self.tick = tick
-        (self.acc_x, self.acc_y, self.acc_z) = struct.unpack_from('fff', data, 20)
-        (self.gyro_x, self.gyro_y, self.gyro_z) = struct.unpack_from('fff', data, 32)
-        (self.q0, self.q1, self.q2, self.q3) = struct.unpack_from('ffff', data, 48)
-        (self.vg_x, self.vg_y, self.vg_z) = struct.unpack_from('fff', data, 76)
-        self.log.debug('LogImuAtti: ' + str(self))

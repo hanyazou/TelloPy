@@ -30,6 +30,12 @@ EXERCISED = {
     'EVENT_CALIBRATION_STATUS': protocol.CalibrationStatus,
     'EVENT_SAMPLE_COMMAND_ACK': None,
     'EVENT_SAMPLE_COMMAND_TIMEOUT': None,
+    'EVENT_SAMPLE_IMU': protocol.LogImuAtti,
+    'EVENT_SAMPLE_GYRO': protocol.LogGyro,
+    'EVENT_SAMPLE_TOF': protocol.LogTof,
+    'EVENT_SAMPLE_MVO': protocol.LogNewMvoFeedback,
+    'EVENT_SAMPLE_CONTROL': protocol.LogControl,
+    'EVENT_SAMPLE_RAW': protocol.LogRecord,
 }
 
 # Public events this test does not (yet) make happen. Adding an event to
