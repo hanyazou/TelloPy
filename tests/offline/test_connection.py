@@ -4,6 +4,7 @@ import time
 
 from tellopy._internal import protocol
 
+from .fake_drone import log_record
 from .harness import DroneTestCase, wait_until
 
 
@@ -96,3 +97,42 @@ class VideoTest(DroneTestCase):
             got += stream.read(1000)
             return got == b'AAAABBBBCCCC'
         wait_until(collect, what='the video bytes to come out of the stream')
+
+
+class LogRecordTest(DroneTestCase):
+
+    def test_each_record_is_published_on_its_own(self):
+        drone = self.start_drone()
+        imus, tofs, raws, messages = [], [], [], []
+        drone.subscribe(drone.EVENT_SAMPLE_IMU, lambda event, sender, data: imus.append(data))
+        drone.subscribe(drone.EVENT_SAMPLE_TOF, lambda event, sender, data: tofs.append(data))
+        drone.subscribe(drone.EVENT_SAMPLE_RAW, lambda event, sender, data: raws.append(data))
+        drone.subscribe(drone.EVENT_LOG_DATA, lambda event, sender, data: messages.append(data))
+        self.connect()
+        self.fake.send_log_data(
+            log_record(2048, 100, bytes(120)),
+            log_record(2048, 200, bytes(120)),
+            log_record(16, 150, bytes([0x64, 0, 1, 7])),
+            log_record(4242, 300, b'abc'))
+        wait_until(lambda: raws, what='the whole message to be processed')
+
+        self.assertEqual([s.tick for s in imus], [100, 200])
+        self.assertIsNot(imus[0], imus[1])
+        self.assertEqual((tofs[0].distance, tofs[0].flag, tofs[0].counter), (100, 1, 7))
+        self.assertEqual((raws[0].record_id, raws[0].payload), (4242, b'abc'))
+        self.assertTrue(all(s.event_time == s.recv_time for s in imus + tofs + raws))
+        # the per-message event still fires once, with the latest IMU record
+        self.assertEqual(len(messages), 1)
+        self.assertEqual(messages[0].imu.tick, 200)
+
+    def test_a_record_too_short_to_decode_is_skipped_alone(self):
+        drone = self.start_drone()
+        imus, tofs = [], []
+        drone.subscribe(drone.EVENT_SAMPLE_IMU, lambda event, sender, data: imus.append(data))
+        drone.subscribe(drone.EVENT_SAMPLE_TOF, lambda event, sender, data: tofs.append(data))
+        self.connect()
+        self.fake.send_log_data(
+            log_record(2048, 100, bytes(10)),           # far shorter than an IMU record
+            log_record(16, 101, bytes([0x64, 0, 1, 7])))
+        wait_until(lambda: tofs, what='the record after the bad one')
+        self.assertEqual(imus, [])
