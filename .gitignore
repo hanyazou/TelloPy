@@ -3,3 +3,4 @@ build/
 dist/
 tellopy.egg-info/
 **/.DS_Store
+__pycache__/
