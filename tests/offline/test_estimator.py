@@ -44,10 +44,10 @@ class TickClockTest(unittest.TestCase):
         self.assertFalse(clock.ready)
         with self.assertRaises(LookupError):
             clock.host_time(1000)
-        for k in range(29):
+        for k in range(30):
             source.add(Sample(event_time=k * 0.1, tick=k * 234405, recv_time=k * 0.1))
-        self.assertFalse(clock.ready)
-        source.add(Sample(event_time=2.9, tick=29 * 234405, recv_time=2.9))
+        self.assertFalse(clock.ready)           # the newest packet is held until the next arrives
+        source.add(Sample(event_time=3.0, tick=30 * 234405, recv_time=3.0))
         self.assertTrue(clock.ready)
 
     def test_finds_the_time_of_a_tick_despite_the_jitter(self):
@@ -62,6 +62,7 @@ class TickClockTest(unittest.TestCase):
     def test_its_own_samples_carry_the_estimate(self):
         clock, tick_at = self.run_clock(seconds=10.0)
         latest = clock.latest()
+        self.assertEqual((latest.rejected, latest.resets), (0, 0))
         self.assertEqual(latest.n, len(clock._points))
         self.assertAlmostEqual(latest.freq, clock.freq)
         self.assertIsNone(clock.close())
@@ -102,19 +103,70 @@ class TickClockTest(unittest.TestCase):
         source = Container()
         clock = TickClock(source, window=10.0, recenter_ticks=1e5, reject_sigmas=1e9)
         rng = random.Random(7)
-        kept = []
+        seen = []
         for k in range(1500):
             t = k / 30.0
             sample = tick_sample(t, lambda t: int(1000000 + FREQ * t), DELAY, rng.gauss(0, 0.027))
             source.add(sample)
-            kept.append((sample.tick, sample.recv_time))
-            kept = [(x, y) for x, y in kept if sample.recv_time - y <= 10.0]
+            seen.append((sample.tick, sample.recv_time))
             if k % 250 == 249:
-                n = len(kept)
-                mx, my = sum(x for x, _ in kept) / n, sum(y for _, y in kept) / n
-                slope = sum((x - mx) * (y - my) for x, y in kept) / sum((x - mx) ** 2 for x, _ in kept)
+                # the newest packet is held back until the next arrives, so the clock has fitted all but it
+                fitted = seen[:-1]
+                fitted = [(x, y) for x, y in fitted if fitted[-1][1] - y <= 10.0]
+                n = len(fitted)
+                mx, my = sum(x for x, _ in fitted) / n, sum(y for _, y in fitted) / n
+                slope = sum((x - mx) * (y - my) for x, y in fitted) / sum((x - mx) ** 2 for x, _ in fitted)
                 expected = my + slope * (sample.tick - mx)
                 self.assertAlmostEqual(clock.host_time(sample.tick), expected, delta=1e-6)
+
+    def test_stale_records_at_the_start_do_not_spoil_the_clock(self):
+        # what a real drone sends on connecting: three old records from just after it booted
+        # (ticks of about 3.5 s), all arriving at once, and then the counter's real present
+        # value (here about 52 s).
+        rng = random.Random(1)
+        source = Container()
+        clock = TickClock(source)
+        for k in range(3):
+            source.add(Sample(event_time=100.0, tick=8039088 + k * 234119, recv_time=100.0))
+        tick_at = lambda t: int(122000000 + FREQ * t)
+        for k in range(450):                    # 15 s: well within the minute a bad start would linger
+            t = k / 30.0
+            recv = 100.2 + t + DELAY + rng.gauss(0, 0.027)
+            source.add(Sample(event_time=recv, tick=tick_at(t), recv_time=recv))
+        self.assertTrue(clock.ready)
+        self.assertAlmostEqual(clock.freq, FREQ, delta=FREQ * 2e-3)
+        self.assertAlmostEqual(clock.host_time(tick_at(14.9)), 100.2 + 14.9 + DELAY, delta=0.012)
+        self.assertEqual(clock.resets, 0)
+
+    def test_it_starts_as_soon_as_enough_real_records_have_come(self):
+        source = Container()
+        clock = TickClock(source, min_samples=30)
+        for k in range(3):
+            source.add(Sample(event_time=1.0, tick=8039088 + k * 234119, recv_time=1.0))
+        for k in range(29):
+            source.add(Sample(event_time=1.2 + k / 30.0, tick=int(122000000 + FREQ * k / 30.0), recv_time=1.2 + k / 30.0))
+        self.assertFalse(clock.ready)           # 29 good ones are not yet enough
+        source.add(Sample(event_time=2.2, tick=int(122000000 + FREQ * 29 / 30.0), recv_time=1.2 + 29 / 30.0))
+        self.assertFalse(clock.ready)           # 30, but the newest packet is held until the next arrives
+        source.add(Sample(event_time=2.3, tick=int(122000000 + FREQ * 30 / 30.0), recv_time=1.2 + 30 / 30.0))
+        self.assertTrue(clock.ready)
+
+    def test_only_the_freshest_record_of_a_packet_counts(self):
+        # every packet carries three records whose ticks reach back 0, 40 and 80 ms, all
+        # arriving together; the clock must come out the same as if only the freshest were fed
+        rng = random.Random(3)
+        with_all, freshest = Container(), Container()
+        clock_all, clock_freshest = TickClock(with_all), TickClock(freshest)
+        for k in range(900):
+            recv = k / 30.0 + DELAY + rng.gauss(0, 0.027)
+            for age in (0.08, 0.04, 0.0):
+                tick = int(1000000 + FREQ * (k / 30.0 - age))
+                sample = Sample(event_time=recv, tick=tick, recv_time=recv)
+                with_all.add(sample)
+                if age == 0.0:
+                    freshest.add(sample)
+        self.assertAlmostEqual(clock_all.host_time(5000000), clock_freshest.host_time(5000000), delta=1e-9)
+        self.assertEqual(clock_all.residual_std, clock_freshest.residual_std)
 
     def test_samples_without_tick_or_recv_time_are_ignored(self):
         source = Container()
