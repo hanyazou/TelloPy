@@ -153,6 +153,99 @@ class TickClockTest(unittest.TestCase):
         source.add(Sample(event_time=2.3, tick=int(122000000 + FREQ * 30 / 30.0), recv_time=1.2 + 30 / 30.0))
         self.assertTrue(clock.ready)
 
+    def test_it_says_what_it_knows_for_every_packet(self):
+        source = Container()
+        clock = TickClock(source, provisional_samples=5, min_samples=30)
+        heard = []
+        clock.subscribe(heard.append)
+        tick_at = lambda k: int(1000000 + FREQ * k / 30.0)
+        for k in range(40):
+            source.add(Sample(event_time=k / 30.0, tick=tick_at(k), recv_time=k / 30.0))
+        self.assertEqual(len(heard), 39)                # the newest packet is held until the next arrives
+        self.assertEqual([s.n for s in heard[:4]], [0, 0, 0, 0])
+        self.assertEqual(heard[0].host_at_tick, None)
+        self.assertEqual(heard[0].freq_std, None)
+        self.assertEqual([s.n for s in heard[4:8]], [5, 6, 7, 8])                # the rough estimate
+        self.assertEqual(heard[4].freq, clock.nominal_freq)
+        self.assertAlmostEqual(heard[4].host_at_tick, 4 / 30.0, delta=1e-3)
+        self.assertEqual([s.n for s in heard[-3:]], [37, 38, 39])              # fitted from the 30th
+        self.assertAlmostEqual(heard[-1].freq, FREQ, delta=1.0)
+        self.assertTrue(clock.ready)
+        self.assertTrue(all(s.tick == tick_at(k) for k, s in enumerate(heard)))
+
+    def test_the_rough_estimate_sets_aside_stale_records(self):
+        source = Container()
+        clock = TickClock(source)
+        for k in range(3):
+            source.add(Sample(event_time=1.0, tick=8039088 + k * 234119, recv_time=1.0))
+        tick_at = lambda t: int(122000000 + FREQ * t)
+        for k in range(12):
+            t = k / 30.0
+            source.add(Sample(event_time=1.2 + t, tick=tick_at(t), recv_time=1.2 + t))
+        heard = list(clock)
+        self.assertEqual([s.n for s in heard if s.n][:3], [5, 6, 7])    # not before 5 real ones agree
+        self.assertEqual(sum(1 for s in heard if s.n), 7)
+        self.assertEqual(heard[-1].n, 11)
+        self.assertAlmostEqual(heard[-1].host_at_tick, 1.2 + 10 / 30.0, delta=2e-3)
+
+    def test_a_late_packet_is_still_answered_with_the_estimate(self):
+        source = Container()
+        clock = TickClock(source)
+        tick_at = lambda k: int(1000000 + FREQ * k / 30.0)
+        for k in range(60):
+            source.add(Sample(event_time=k / 30.0, tick=tick_at(k), recv_time=k / 30.0))
+        source.add(Sample(event_time=2.4, tick=tick_at(60), recv_time=60 / 30.0 + 0.4))     # 0.4 s late
+        before = clock.latest()
+        source.add(Sample(event_time=2.1, tick=tick_at(61), recv_time=61 / 30.0))
+        after = clock.latest()
+        self.assertEqual((before.rejected, after.rejected), (0, 1))
+        self.assertEqual(after.n, before.n)
+        self.assertEqual(after.tick, tick_at(60))
+        self.assertAlmostEqual(after.host_at_tick, 60 / 30.0, delta=1e-3)   # at its own tick, not where it arrived
+
+    def test_it_says_when_it_has_lost_its_estimate(self):
+        heard = []
+
+        def jump(t, sample):
+            if 20.0 <= t:
+                sample.recv_time += 5.0
+                sample.event_time += 5.0
+            return sample
+        source = Container()
+        clock = TickClock(source, min_samples=30)
+        clock.subscribe(heard.append)
+        rng = random.Random(1)
+        for k in range(1200):
+            t = k / 30.0
+            source.add(jump(t, tick_sample(t, lambda t: int(1000000 + FREQ * t), DELAY, rng.gauss(0, 0.027))))
+        lost = [i for i, s in enumerate(heard) if s.n == 0 and i and heard[i - 1].n]
+        self.assertEqual(len(lost), 1)
+        self.assertEqual(heard[lost[0]].resets, 1)
+        self.assertEqual(heard[lost[0] - 1].resets, 0)
+        self.assertGreater(heard[-1].n, 0)                          # and it has come back
+
+    def test_the_error_it_reports_is_about_the_error_it_makes(self):
+        # over many runs, the root mean square of the actual error of host_at_tick against its
+        # reported host_at_tick_std, from the first estimate to a minute in
+        for seconds in (0.2, 0.4, 1.0, 5.0, 60.0):
+            actual, reported = [], []
+            for seed in range(300):
+                clock, tick_at = self.run_clock(seconds=seconds, seed=seed)
+                latest = clock.latest()
+                t = (latest.tick - 1000000) / FREQ
+                actual.append(latest.host_at_tick - (t + DELAY))
+                reported.append(latest.host_at_tick_std)
+            ratio = math.sqrt(sum(a * a for a in actual) / sum(r * r for r in reported))
+            self.assertTrue(0.8 < ratio < 1.25, '%s s: actual/reported %.2f' % (seconds, ratio))
+
+    def test_the_error_shrinks_as_it_learns(self):
+        seen = []
+        for seconds in (0.2, 0.5, 1.0, 5.0, 60.0):
+            clock, _ = self.run_clock(seconds=seconds)
+            seen.append(clock.latest().host_at_tick_std)
+        self.assertEqual(seen, sorted(seen, reverse=True))
+        self.assertLess(seen[-1], 0.003)
+
     def test_only_the_freshest_record_of_a_packet_counts(self):
         # every packet carries three records whose ticks reach back 0, 40 and 80 ms, all
         # arriving together; the clock must come out the same as if only the freshest were fed
