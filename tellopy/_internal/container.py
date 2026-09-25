@@ -11,7 +11,7 @@ import threading
 
 from .sample import StickSample
 from .protocol import LogGyro, LogImuAtti
-from .tello import Tello
+from .tello import Tello, log as library_log
 
 
 class Container(object):
@@ -26,6 +26,10 @@ class Container(object):
     against the newest one's event_time (so it needs no clock of its own),
     or once there are more than max_count of them.
 
+    log is where the Container's messages go. Left out, it is the drone's
+    (drone.log) or, without a drone, the library's own -- the one that
+    Tello.set_loglevel() controls.
+
     Samples arrive on the library's receive thread, and add() runs listeners
     there too, so a listener should be quick. Everything here may be called
     from any thread.
@@ -33,8 +37,11 @@ class Container(object):
     SAMPLE = None
     EVENTS = ()
 
-    def __init__(self, drone=None, max_age=10.0, max_count=None):
+    def __init__(self, drone=None, max_age=10.0, max_count=None, log=None):
         self.drone = drone
+        if log is None:
+            log = drone.log if drone is not None else library_log
+        self.log = log
         self.max_age = max_age
         self.max_count = max_count
         self.count = 0              # how many Samples have ever been added

@@ -22,8 +22,8 @@ class Estimator(Container):
     """
     EVENTS = ()
 
-    def __init__(self, max_age=10.0, max_count=None):
-        super(Estimator, self).__init__(None, max_age, max_count)
+    def __init__(self, max_age=10.0, max_count=None, log=None):
+        super(Estimator, self).__init__(None, max_age, max_count, log)
         self._listening = []
 
     def _listen(self, container, handler):
@@ -96,8 +96,8 @@ class TickClock(Estimator):
 
     def __init__(self, *inputs, window=60.0, min_samples=30, reject_sigmas=5.0,
                  reject_floor=0.005, max_consecutive_rejects=20, recenter_ticks=2e8,
-                 nominal_freq=2344062.0, warmup_tolerance=0.5):
-        super(TickClock, self).__init__(max_age=10.0)
+                 nominal_freq=2344062.0, warmup_tolerance=0.5, log=None):
+        super(TickClock, self).__init__(max_age=10.0, log=log)
         self.nominal_freq = nominal_freq
         self.warmup_tolerance = warmup_tolerance
         self._candidates = []       # (unwrapped tick, recv_time) while starting up
@@ -370,8 +370,8 @@ class ResponseLagEstimator(Estimator):
 
     def __init__(self, sticks, source, clock, axis='yaw', stage=0, signal=None, history=20, quiet=1.0,
                  command_threshold=0.15, release_threshold=0.05, hold=3.0, settle=0.3,
-                 min_peak=None, min_snr=6.0, max_lag=0.8, max_gap=0.15):
-        super(ResponseLagEstimator, self).__init__(max_age=600.0)
+                 min_peak=None, min_snr=6.0, max_lag=0.8, max_gap=0.15, log=None):
+        super(ResponseLagEstimator, self).__init__(max_age=600.0, log=log)
         if signal is None and axis not in self.MIN_PEAK:
             raise ValueError('no default signal for the %s axis; pass signal=' % axis)
         self.axis = axis
