@@ -6,6 +6,7 @@ Samples of a Container that is filled straight from the drone. It has no
 drone events of its own; it listens to the Containers it is given.
 """
 import collections
+import copy
 import math
 import statistics
 
@@ -347,6 +348,65 @@ class TickClock(Estimator):
         if fit is None or len(self._points) < self.min_samples:
             raise LookupError('TickClock has no estimate yet')
         return fit
+
+
+class Retimer(Estimator):
+    """Republishes the Samples of a Container with event_time worked out from their tick.
+
+    A raw Sample's event_time is its recv_time, which jitters with the delay of the
+    packet that carried it. Given a TickClock's ClockSamples (`clock`), a Sample
+    from `source` goes out as a copy of the same class: event_time is the host time
+    of its tick, event_time_std is how far that can be trusted (seconds) and
+    everything else, recv_time and tick included, is as it was. The Sample that came
+    in is not changed.
+
+    event_time_std is the ClockSample's uncertainty at its own tick, and the rate's
+    uncertainty times the distance in ticks from there, taken together.
+
+    A Sample goes out as it came, event_time as it was and event_time_std None, when
+    it can't be converted: the clock has no estimate yet (or none for the moment), or
+    the converted time lies more than `max_shift` seconds from the Sample's
+    recv_time, which a measurement cannot -- the estimate does not fit this Sample.
+    A Sample without a tick or a recv_time can't be converted either; that is
+    a mistake in what the Retimer was given, and is logged as an error, once.
+
+    `clock` should be filled from raw Containers, not from `source` or anything
+    made by a Retimer.
+    """
+    def __init__(self, source, clock, max_shift=0.5, max_age=10.0, max_count=None, log=None):
+        super(Retimer, self).__init__(max_age, max_count, log)
+        self.SAMPLE = source.SAMPLE
+        self.max_shift = max_shift
+        self._source_name = type(source).__name__
+        self._clock_sample = None       # the newest the clock has published
+        self._complained = False
+        self._listen(clock, self._on_clock)
+        self._listen(source, self._on_source)
+
+    def _on_clock(self, clock_sample):
+        self._clock_sample = clock_sample
+
+    def _on_source(self, sample):
+        self.add(self._retimed(sample))
+
+    def _retimed(self, sample):
+        if sample.tick is None or sample.recv_time is None:
+            if not self._complained:
+                self._complained = True
+                self.log.error('Retimer of %s: %s has no tick or no recv_time, so it is passed on '
+                               'as it is (said once)' % (self._source_name, type(sample).__name__))
+            return sample
+        clock = self._clock_sample
+        if clock is None or clock.n == 0:
+            return sample
+        later = _tick_difference(sample.tick, clock.tick) / clock.freq      # seconds after the clock's tick
+        event_time = clock.host_at_tick + later
+        if self.max_shift < abs(event_time - sample.recv_time):
+            return sample
+        retimed = copy.copy(sample)
+        retimed.event_time = event_time
+        retimed.event_time_std = math.hypot(clock.host_at_tick_std, later * clock.freq_std / clock.freq)
+        return retimed
 
 
 class LagSample(Sample):

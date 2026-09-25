@@ -10,11 +10,16 @@ class Sample(object):
 
     recv_time is the host time the packet carrying this observation
     arrived, or None if that hasn't happened (yet).
+
+    event_time_std is how far event_time can be trusted, one standard
+    deviation in seconds; None if that has not been estimated, as it has
+    not for the Samples that come straight from the drone.
     """
-    def __init__(self, event_time, tick=None, recv_time=None):
+    def __init__(self, event_time, tick=None, recv_time=None, event_time_std=None):
         self.event_time = event_time
         self.tick = tick
         self.recv_time = recv_time
+        self.event_time_std = event_time_std
 
 
 class CommandSample(Sample):
