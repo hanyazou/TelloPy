@@ -17,7 +17,7 @@ from .sample import Sample
 class Estimator(Container):
     """A Container whose Samples are derived from those of other Containers.
 
-    A subclass calls listen(container, handler) for each input; handler is
+    A subclass calls _listen(container, handler) for each input; handler is
     then called with every Sample that container adds.
     """
     EVENTS = ()
@@ -26,7 +26,7 @@ class Estimator(Container):
         super(Estimator, self).__init__(None, max_age, max_count)
         self._listening = []
 
-    def listen(self, container, handler):
+    def _listen(self, container, handler):
         container.subscribe(handler)
         self._listening.append((container, handler))
 
@@ -119,7 +119,7 @@ class TickClock(Estimator):
         self._points = collections.deque()
         self._sums = [0.0] * 5      # sum of x, y, x*x, x*y, y*y
         for container in inputs:
-            self.listen(container, self.on_input)
+            self._listen(container, self._on_input)
 
     # -- what it says ------------------------------------------------------
 
@@ -149,7 +149,7 @@ class TickClock(Estimator):
 
     # -- taking Samples in -------------------------------------------------
 
-    def on_input(self, sample):
+    def _on_input(self, sample):
         if sample.tick is None or sample.recv_time is None:
             return
         with self._lock:
@@ -394,8 +394,8 @@ class ResponseLagEstimator(Estimator):
         self._gyro = collections.deque()        # (host time, the signal's value)
         self._pulse = None
         self._quiet_since = None
-        self.listen(sticks, self.on_stick)
-        self.listen(source, self.on_source)
+        self._listen(sticks, self._on_stick)
+        self._listen(source, self._on_source)
 
     def _default_signal(self, sample):
         if self.axis == 'yaw':
@@ -422,7 +422,7 @@ class ResponseLagEstimator(Estimator):
 
     # -- taking Samples in -------------------------------------------------
 
-    def on_stick(self, sample):
+    def _on_stick(self, sample):
         yaw, t = getattr(sample, self.axis), sample.event_time
         with self._lock:
             pulse = self._pulse
@@ -445,7 +445,7 @@ class ResponseLagEstimator(Estimator):
                 self._pulse = None
                 self._quiet_since = None
 
-    def on_source(self, sample):
+    def _on_source(self, sample):
         try:
             t = self.clock.host_time(sample.tick)
         except LookupError:
