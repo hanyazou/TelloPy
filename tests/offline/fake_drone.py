@@ -93,8 +93,10 @@ class FakeDrone(object):
     def send_light(self):
         self.send(LIGHT_MSG, bytes([1, 0]))
 
-    def send_flight_data(self):
-        self.send(FLIGHT_MSG, bytes(24))
+    def send_flight_data(self, battery=0):
+        payload = bytearray(24)
+        payload[12] = battery           # battery_percentage
+        self.send(FLIGHT_MSG, bytes(payload))
 
     def send_time(self):
         self.send(TIME_CMD, bytes(2))
