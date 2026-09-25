@@ -1,6 +1,7 @@
 #!/bin/sh
-# Run the offline tests: no drone, no Wi-Fi, and nothing to install --
-# they need only Python 3 and its standard library.
+# Run the offline tests -- those in tests/offline, and those of the scripts in
+# tests/response, which run against a fake drone: no drone, no Wi-Fi, and
+# nothing to install; they need only Python 3 and its standard library.
 #
 #   ./tests/offline/test.sh                       run them all
 #   ./tests/offline/test.sh -v                    ... listing each test as it runs
@@ -22,4 +23,4 @@ fi
 if [ $# -gt 0 ] && [ "${1#-}" = "$1" ]; then
     exec "$python" -m unittest "$@"
 fi
-exec "$python" -m unittest discover -s tests/offline -t . "$@"
+exec "$python" -m unittest discover -s tests -t . -p 'test_*.py' "$@"
