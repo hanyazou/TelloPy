@@ -1,7 +1,9 @@
 import unittest
 
 from tellopy._internal.container import Container, ImuContainer, StickContainer
+from tellopy._internal.logger import Logger
 from tellopy._internal.sample import Sample
+from tellopy._internal.tello import log as library_log
 
 from .fake_drone import log_record
 from .harness import DroneTestCase, wait_until
@@ -59,6 +61,15 @@ class ContainerTest(unittest.TestCase):
         with self.assertRaises(TypeError):
             ImuContainer().add(sample(1.0))
 
+    def test_without_a_drone_or_a_log_it_uses_the_librarys_own(self):
+        self.assertIs(Container().log, library_log)
+        self.assertIs(ImuContainer().log, library_log)
+
+    def test_a_log_that_is_given_is_used(self):
+        mine = Logger('mine')
+        self.assertIs(Container(log=mine).log, mine)
+        self.assertIs(ImuContainer(log=mine).log, mine)
+
 
 class ContainerOnADroneTest(DroneTestCase):
 
@@ -79,6 +90,14 @@ class ContainerOnADroneTest(DroneTestCase):
         self.fake.send_flight_data()
         wait_until(lambda: self.fake.received_cmds(0x0050), what='the drone to still be talking')
         self.assertEqual(imus.count, 3)
+
+    def test_takes_the_drones_log_unless_given_one(self):
+        drone = self.start_drone()
+        self.assertIs(ImuContainer(drone).log, drone.log)
+        drone.log = Logger('this drone')            # a drone with a log of its own
+        self.assertIs(ImuContainer(drone).log, drone.log)
+        mine = Logger('mine')
+        self.assertIs(ImuContainer(drone, log=mine).log, mine)
 
     def test_two_drones_dont_mix(self):
         first = self.start_drone()

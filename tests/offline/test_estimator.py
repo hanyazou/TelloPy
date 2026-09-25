@@ -5,8 +5,10 @@ import unittest
 
 from tellopy._internal.container import Container, GyroContainer, ImuContainer, StickContainer
 from tellopy._internal.estimator import LagSample, ResponseLagEstimator, TickClock
+from tellopy._internal.logger import Logger
 from tellopy._internal.protocol import LogGyro, LogImuAtti
 from tellopy._internal.sample import Sample, StickSample
+from tellopy._internal.tello import log as library_log
 
 FREQ = 2344050.0
 DELAY = 0.020           # mean delay of a packet: what the fitted line has in it
@@ -167,6 +169,11 @@ class TickClockTest(unittest.TestCase):
                     freshest.add(sample)
         self.assertAlmostEqual(clock_all.host_time(5000000), clock_freshest.host_time(5000000), delta=1e-9)
         self.assertEqual(clock_all.residual_std, clock_freshest.residual_std)
+
+    def test_it_logs_to_the_librarys_own_log_unless_given_one(self):
+        self.assertIs(TickClock(Container()).log, library_log)
+        mine = Logger('mine')
+        self.assertIs(TickClock(Container(), log=mine).log, mine)
 
     def test_samples_without_tick_or_recv_time_are_ignored(self):
         source = Container()
@@ -363,6 +370,12 @@ class ResponseLagEstimatorTest(unittest.TestCase):
                 imus.add(imu)
         self.assertGreaterEqual(len(estimator), len(self.PULSES) - 2)
         self.assertAlmostEqual(estimator.summary('midpoint').median, flight.expected()[1], delta=0.02)
+
+    def test_it_logs_to_the_librarys_own_log_unless_given_one(self):
+        sticks, gyros = StickContainer(), GyroContainer()
+        self.assertIs(ResponseLagEstimator(sticks, gyros, TickClock(gyros)).log, library_log)
+        mine = Logger('mine')
+        self.assertIs(ResponseLagEstimator(sticks, gyros, TickClock(gyros), log=mine).log, mine)
 
     def test_closing_stops_listening(self):
         sticks, gyros = StickContainer(), GyroContainer()
