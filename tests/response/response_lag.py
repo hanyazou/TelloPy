@@ -168,8 +168,11 @@ def main():
     def record_clock(s):
         clocks_seen[0] += 1
         if clocks_seen[0] % 10 == 0:
-            files.write('clock', '%.6f %d %.6f %.3f %.6f %d %d %d\n' % (
-                s.recv_time, s.tick, s.host_at_tick, s.freq, s.residual_std, s.n, s.rejected, s.resets))
+            if s.n:
+                files.write('clock', '%.6f %d %.6f %.3f %.6f %d %d %d\n' % (
+                    s.recv_time, s.tick, s.host_at_tick, s.freq, s.residual_std, s.n, s.rejected, s.resets))
+            else:           # no estimate at the moment
+                files.write('clock', '%.6f %d - - - 0 %d %d\n' % (s.recv_time, s.tick, s.rejected, s.resets))
     clock.subscribe(record_clock)
 
     estimators = []

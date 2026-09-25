@@ -37,23 +37,41 @@ class Estimator(Container):
         super(Estimator, self).close()
 
 
-class ClockSample(Sample):
-    """One estimate of how the device's tick counter maps to host time.
+def _tick_difference(tick, reference):
+    """How many ticks tick is ahead of reference. The counter is 32 bits and wraps,
+    so this is the nearer way round: a little behind, not a whole lap ahead."""
+    delta = (tick - reference) & 0xffffffff
+    return delta - 0x100000000 if delta >= 0x80000000 else delta
 
-    tick and recv_time are those of the input that produced it, and
-    host_at_tick is what the fit says host time was at that tick (recv_time
-    is that plus this packet's own delay). freq is in ticks per second and
-    residual_std, in seconds, is how far the packets' arrival times scatter
-    around the fit: the jitter, which the fit removes from event times.
-    rejected and resets are the clock's running totals of Samples left out of
-    the fit and of times it started over.
+
+class ClockSample(Sample):
+    """What a TickClock knows about how its counter's ticks map to host time.
+
+    The clock publishes one for every packet it takes in, whatever it knows at
+    that point, so the newest one is the clock's present estimate. tick and
+    recv_time are those of the packet (event_time is recv_time: when this was
+    made); rejected and resets are the clock's running totals of packets left
+    out of the estimate and of times it started over.
+
+    n is how many packets the estimate rests on. 0 means there is no estimate --
+    the clock is starting up, or has started over -- and then the fields below
+    are None. Otherwise: when the counter read `tick`, host time was
+    host_at_tick, give or take host_at_tick_std seconds; the counter runs at freq
+    ticks per second, give or take freq_std. Those are how far the estimate can be
+    trusted, not the scatter of the packets' arrival, which is residual_std (also
+    seconds). The host time of another tick is
+    host_at_tick + (that tick - tick) / freq, with an uncertainty that grows with
+    the distance from `tick` at the rate freq_std says.
     """
-    def __init__(self, tick, recv_time, host_at_tick, freq, residual_std, n, rejected=0, resets=0):
+    def __init__(self, tick, recv_time, n=0, host_at_tick=None, freq=None,
+                 host_at_tick_std=None, freq_std=None, residual_std=None, rejected=0, resets=0):
         super(ClockSample, self).__init__(event_time=recv_time, tick=tick, recv_time=recv_time)
+        self.n = n
         self.host_at_tick = host_at_tick
         self.freq = freq
+        self.host_at_tick_std = host_at_tick_std
+        self.freq_std = freq_std
         self.residual_std = residual_std
-        self.n = n
         self.rejected = rejected
         self.resets = resets
 
@@ -88,19 +106,33 @@ class TickClock(Estimator):
     stale -- old records from just after the drone booted, whose ticks are far
     behind the counter's present value -- and fitting a line through those and the
     real ones gives nonsense for as long as they stay in the window. So the clock
-    doesn't start until `min_samples` Samples agree with each other and with the
-    counter's known rate (`nominal_freq`) to within `warmup_tolerance` seconds; the
-    ones that don't are discarded. The same start-up follows a reset.
+    doesn't start until Samples agree with each other and with the counter's
+    known rate (`nominal_freq`) to within `warmup_tolerance` seconds; the ones that
+    don't are discarded. The same start-up follows a reset.
+
+    What it knows comes out as a ClockSample for every packet, in three stages.
+    Until `provisional_samples` Samples agree there is no estimate (n is 0).
+    Then there is a rough one: the rate is taken to be the nominal one,
+    give or take `nominal_freq_error` (a fraction), and only the offset is worked
+    out, from the Samples so far. Once `min_samples` have agreed a line is fitted,
+    and its rate is measured too.
+
+    ready, freq, residual_std and host_time() are a second way to get at the line,
+    and only speak once it is fitted.
     """
     SAMPLE = ClockSample
 
     def __init__(self, *inputs, window=60.0, min_samples=30, reject_sigmas=5.0,
                  reject_floor=0.005, max_consecutive_rejects=20, recenter_ticks=2e8,
-                 nominal_freq=2344062.0, warmup_tolerance=0.5, log=None):
+                 nominal_freq=2344062.0, warmup_tolerance=0.5, log=None,
+                 provisional_samples=5, nominal_freq_error=3e-4):
         super(TickClock, self).__init__(max_age=10.0, log=log)
         self.nominal_freq = nominal_freq
+        self.nominal_freq_error = nominal_freq_error
         self.warmup_tolerance = warmup_tolerance
+        self.provisional_samples = provisional_samples
         self._candidates = []       # (unwrapped tick, recv_time) while starting up
+        self._provisional = None    # (offset, n, sigma, centre) of the rough estimate, once there is one
         self._started = False
         self.window = window
         self.min_samples = min_samples
@@ -163,14 +195,12 @@ class TickClock(Estimator):
             if reading is None:
                 return
             clock_sample = self._take(*reading)
-        if clock_sample is not None:
-            self.add(clock_sample)
+        self.add(clock_sample)
 
     def _take(self, unwrapped, recv_time, tick):
-        """Fit one packet's freshest tick; the ClockSample to publish, if any."""
-        if not self._started:
-            if not self._start(unwrapped, recv_time):
-                return None
+        """Fit one packet's freshest tick; the ClockSample that says what the clock now knows."""
+        if not self._started and not self._start(unwrapped, recv_time):
+            return self._clock_sample(unwrapped, recv_time, tick)
         x, y = unwrapped - self._x0, recv_time - self._y0
         fit = self._fit()
         if fit is not None and self.min_samples <= len(self._points) and not self._just_started:
@@ -178,10 +208,9 @@ class TickClock(Estimator):
             if abs(y - (intercept + slope * x)) > self.reject_sigmas * max(std, self.reject_floor):
                 self.rejected += 1
                 self._consecutive_rejects += 1
-                if self._consecutive_rejects < self.max_consecutive_rejects:
-                    return None
-                self._reset(unwrapped, recv_time)
-                return None
+                if self._consecutive_rejects >= self.max_consecutive_rejects:
+                    self._reset(unwrapped, recv_time)
+                return self._clock_sample(unwrapped, recv_time, tick)
         if not self._just_started:
             self._push(x, y)
         self._just_started = False
@@ -190,13 +219,29 @@ class TickClock(Estimator):
             self._pop()
         if self.recenter_ticks < x:
             self._recenter(x, y)
-        fit = self._fit()
-        if fit is None or len(self._points) < self.min_samples:
-            return None
-        slope, intercept, std = fit
-        x, y = self._points[-1]
-        return ClockSample(tick, recv_time, self._y0 + intercept + slope * x,
-                           1.0 / slope, std, len(self._points), self.rejected, self.resets)
+        return self._clock_sample(unwrapped, recv_time, tick)
+
+    def _clock_sample(self, unwrapped, recv_time, tick):
+        """What the clock knows now, at this packet's tick."""
+        totals = dict(rejected=self.rejected, resets=self.resets)
+        fit = self._fit() if self._started and self.min_samples <= len(self._points) else None
+        if fit is not None:
+            slope, intercept, std = fit
+            n = len(self._points)
+            sx, _, sxx, _, _ = self._sums
+            spread = sxx - sx * sx / n              # how widely the points are spread over ticks
+            x = unwrapped - self._x0
+            freq = 1.0 / slope
+            return ClockSample(tick, recv_time, n=n, host_at_tick=self._y0 + intercept + slope * x, freq=freq,
+                               host_at_tick_std=std * math.sqrt(1.0 / n + (x - sx / n) ** 2 / spread),
+                               freq_std=freq * freq * std / math.sqrt(spread), residual_std=std, **totals)
+        if self._provisional is not None:
+            offset, n, sigma, centre = self._provisional
+            drift = abs(unwrapped - centre) / self.nominal_freq * self.nominal_freq_error
+            return ClockSample(tick, recv_time, n=n, host_at_tick=offset + unwrapped / self.nominal_freq,
+                               freq=self.nominal_freq, host_at_tick_std=math.sqrt(sigma * sigma / n + drift * drift),
+                               freq_std=self.nominal_freq * self.nominal_freq_error, residual_std=sigma, **totals)
+        return ClockSample(tick, recv_time, **totals)
 
     # -- the fit -----------------------------------------------------------
 
@@ -204,10 +249,7 @@ class TickClock(Estimator):
         if self._last_tick is None:
             unwrapped = tick
         else:
-            delta = (tick - self._last_tick) & 0xffffffff
-            if delta >= 0x80000000:
-                delta -= 0x100000000        # a little behind the newest, not a whole lap ahead
-            unwrapped = self._last_unwrapped + delta
+            unwrapped = self._last_unwrapped + _tick_difference(tick, self._last_tick)
         if commit:
             self._last_tick, self._last_unwrapped = tick, unwrapped
         return unwrapped
@@ -227,29 +269,54 @@ class TickClock(Estimator):
         self._points.clear()
         self._sums = [0.0] * 5
         self._started = False
+        self._provisional = None
         self._candidates = [(unwrapped, recv_time)]
         self._consecutive_rejects = 0
 
     def _start(self, unwrapped, recv_time):
-        """Take a candidate; True once enough of them agree that the clock has started."""
+        """Take a candidate; True once enough of them agree that the clock has started.
+
+        Before that, keeps the rough estimate up to date once a few of them agree.
+        """
         self._candidates.append((unwrapped, recv_time))
-        if len(self._candidates) < self.min_samples:
+        if len(self._candidates) < self.provisional_samples:
             return False
         # each candidate implies when the counter read zero, if it ran at its nominal rate;
         # the real ones agree on that, a stale one is off by however stale it is
         implied = [y - x / self.nominal_freq for x, y in self._candidates]
         middle = statistics.median(implied)
-        agreeing = [c for c, i in zip(self._candidates, implied) if abs(i - middle) <= self.warmup_tolerance]
-        if len(agreeing) < self.min_samples:
+        agreeing = [(c, i) for c, i in zip(self._candidates, implied) if abs(i - middle) <= self.warmup_tolerance]
+        if len(agreeing) < self.provisional_samples:
+            self._provisional = None
             del self._candidates[:-4 * self.min_samples]    # keep looking, but not for ever
             return False
-        self._x0, self._y0 = agreeing[0]
-        for x, y in agreeing:
+        if len(agreeing) < self.min_samples:
+            self._provisional = self._rough_estimate(agreeing)
+            return False
+        self._provisional = None
+        self._x0, self._y0 = agreeing[0][0]
+        for (x, y), _ in agreeing:
             self._push(x - self._x0, y - self._y0)
         self._candidates = []
         self._started = True
         self._just_started = True
         return True
+
+    def _rough_estimate(self, agreeing):
+        """(offset, n, sigma, centre) from a few candidates that agree: when the counter read
+        zero, if it ran at its nominal rate; how many; their scatter; and the tick they centre on."""
+        for _ in range(2):      # twice: leave out those far from the rest, and take the scatter again
+            offsets = [i for _, i in agreeing]
+            mean = statistics.mean(offsets)
+            sigma = max(statistics.stdev(offsets), self.reject_floor)
+            near = [(c, i) for c, i in agreeing if abs(i - mean) <= 4 * sigma]
+            if len(near) < self.provisional_samples:
+                break
+            agreeing = near
+        offsets = [i for _, i in agreeing]
+        return (statistics.mean(offsets), len(agreeing),
+                max(statistics.stdev(offsets), self.reject_floor),
+                statistics.mean(c[0] for c, _ in agreeing))
 
     def _recenter(self, dx, dy):
         """Move the origin to the newest point, so numbers stay small however long this runs."""
