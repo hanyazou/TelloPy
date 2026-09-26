@@ -361,9 +361,9 @@ class LogRecord(Sample):
         self.recv_time = recv_time
         self.event_time = recv_time
         self.payload = bytes(data)
-        self.decode(data)
+        self._decode(data)
 
-    def decode(self, data):
+    def _decode(self, data):
         """Fill in this record's fields from its payload; nothing to
         decode for a record we don't know yet."""
         pass
@@ -402,7 +402,7 @@ class LogNewMvoFeedback(LogRecord):
             ",mvo.pos_x,mvo.pos_y,mvo.pos_z" +
             "")
 
-    def decode(self, data):
+    def _decode(self, data):
         self.log.debug('LogNewMvoFeedback: length=%d %s' % (len(data), byte_to_hexstring(data)))
         (self.vel_x, self.vel_y, self.vel_z) = struct.unpack_from('<hhh', data, 2)
         self.vel_x /= 100.0
@@ -464,7 +464,7 @@ class LogImuAtti(LogRecord):
             ",imu.vg_x,imu.vg_y,imu.vg_z" +
             "")
 
-    def decode(self, data):
+    def _decode(self, data):
         self.log.debug('LogImuAtti: length=%d %s' % (len(data), byte_to_hexstring(data)))
         (self.acc_x, self.acc_y, self.acc_z) = struct.unpack_from('fff', data, 20)
         (self.gyro_x, self.gyro_y, self.gyro_z) = struct.unpack_from('fff', data, 32)
@@ -490,7 +490,7 @@ class LogGyro(LogRecord):
         self.stages = ((0.0, 0.0, 0.0),) * 3
         super(LogGyro, self).__init__(log, data)
 
-    def decode(self, data):
+    def _decode(self, data):
         self.stages = tuple(struct.unpack_from('<3f', data, off) for off in (1, 13, 25))
 
 
@@ -504,7 +504,7 @@ class LogTof(LogRecord):
         self.counter = 0        # advances by 4 per record, wraps at 256
         super(LogTof, self).__init__(log, data)
 
-    def decode(self, data):
+    def _decode(self, data):
         (self.distance, self.flag, self.counter) = struct.unpack_from('<hBB', data, 0)
 
 
@@ -523,26 +523,14 @@ class LogControl(LogRecord):
         self.cols = (0,) * 8
         super(LogControl, self).__init__(log, data)
 
-    def decode(self, data):
+    def _decode(self, data):
         self.cols = struct.unpack_from('<8h', data, 6)
-
-    @property
-    def roll_err(self):
-        return self.cols[0]
-
-    @property
-    def yaw_err(self):
-        return self.cols[2]
-
-    @property
-    def throttle(self):
-        return self.cols[3]
 
 
 class LogData(object):
     ID_NEW_MVO_FEEDBACK                = LogNewMvoFeedback.ID
     ID_IMU_ATTI                        = LogImuAtti.ID
-    RECORD_CLASSES = dict((cls.ID, cls) for cls in (
+    _RECORD_CLASSES = dict((cls.ID, cls) for cls in (
         LogNewMvoFeedback, LogImuAtti, LogGyro, LogTof, LogControl))
     unknowns = []
 
@@ -605,7 +593,7 @@ class LogData(object):
                 payload = bytearray([ord(x) ^ ord(xorval) for x in data[pos+10:pos+10+length-12]])
             else:
                 payload = bytearray([x ^ xorval for x in data[pos+10:pos+10+length-12]])
-            cls = self.RECORD_CLASSES.get(id)
+            cls = self._RECORD_CLASSES.get(id)
             if cls is None:
                 if not id in self.unknowns:
                     self.log.info('LogData: UNHANDLED LOG DATA: id=%5d, length=%4d' % (id, length-12))
