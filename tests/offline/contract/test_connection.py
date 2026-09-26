@@ -140,3 +140,26 @@ class StickTest(DroneTestCase):
         # each one published matches one packet that reached the drone
         on_wire = self.fake.received_cmds(wire.STICK_CMD)
         self.assertLessEqual(abs(len(on_wire) - len(sticks)), 2)
+
+
+class CalibrationTest(DroneTestCase):
+
+    def test_the_calibration_status_says_how_far_it_has_come(self):
+        drone = self.connect()
+        got = []
+        drone.subscribe(drone.EVENT_CALIBRATION_STATUS, lambda event, sender, data: got.append(data))
+        drone.start_calibration()
+        self.fake.send_calibration_status(step_mask=0b000111, progress=40)
+        wait_until(lambda: got, what='a calibration status')
+        status = got[0]
+        self.assertEqual((status.step_mask, status.progress, status.steps_done, status.done), (0b000111, 40, 3, False))
+
+    def test_the_calibration_is_done_when_the_progress_reaches_100(self):
+        drone = self.connect()
+        got = []
+        drone.subscribe(drone.EVENT_CALIBRATION_STATUS, lambda event, sender, data: got.append(data))
+        drone.start_calibration()
+        self.fake.send_calibration_status(step_mask=0x3f, progress=100)
+        wait_until(lambda: got, what='a calibration status')
+        status = got[0]
+        self.assertEqual((status.steps_done, status.done), (6, True))
