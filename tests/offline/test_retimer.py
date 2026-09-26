@@ -8,21 +8,7 @@ from tellopy._internal.estimator import Retimer, TickClock
 from tellopy._internal.protocol import LogImuAtti
 from tellopy._internal.sample import Sample
 
-from .test_estimator import DELAY, FREQ
-
-TICK0 = 1000000
-
-
-def tick_at(t, tick0=TICK0):
-    return int(tick0 + FREQ * t) & 0xffffffff
-
-
-class Log(object):
-    def __init__(self):
-        self.errors = []
-
-    def error(self, message):
-        self.errors.append(message)
+from tests.support.synthetic import DELAY, FREQ, Log, TICK0, imu_sample, tick_at
 
 
 class RetimerTest(unittest.TestCase):
@@ -73,10 +59,7 @@ class RetimerTest(unittest.TestCase):
 
     def test_the_time_of_a_sample_of_a_class_of_its_own_is_set_on_a_copy_of_that_class(self):
         def imu(t, recv, tick):
-            sample = LogImuAtti()
-            sample.gyro_z = 7.0
-            sample.tick, sample.recv_time, sample.event_time = tick, recv, recv
-            return sample
+            return imu_sample(tick, recv, gyro_z=7.0)
         source, retimer, _ = self.fly(seconds=3.0, source=ImuContainer(max_age=1e9), make=imu)
         last = retimer.latest()
         self.assertIsInstance(last, LogImuAtti)
