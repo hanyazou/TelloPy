@@ -3,10 +3,8 @@ import math
 import random
 import unittest
 
-from tellopy._internal.container import Container, GyroContainer, ImuContainer, StickContainer
-from tellopy._internal.estimator import ClockSample, LagSample, ResponseLagEstimator, TickClock
-from tellopy._internal.logger import Logger
-from tellopy._internal.sample import Sample, StickSample
+from tellopy import (ClockSample, Container, GyroContainer, ImuContainer, LagSample, Logger, ResponseLagEstimator,
+                     Sample, StickContainer, StickSample, TickClock)
 from tellopy._internal.tello import log as library_log
 
 from tests.support.synthetic import DELAY, FREQ, Flight, host_time, imu_sample, tick_sample
@@ -45,7 +43,7 @@ class TickClockTest(unittest.TestCase):
         clock, tick_at = self.run_clock(seconds=10.0)
         latest = clock.latest()
         self.assertEqual((latest.rejected, latest.resets), (0, 0))
-        self.assertEqual(latest.n, len(clock._points))
+        self.assertEqual(latest.n, 10 * 30 - 1)         # every packet but the newest, which is held until the next arrives
         self.assertIsNone(clock.close())
 
     def test_the_32_bit_counter_wrapping_is_no_problem(self):
@@ -281,14 +279,17 @@ class TickClockTest(unittest.TestCase):
         clock = TickClock(source)
         source.add(Sample(event_time=1.0))
         source.add(Sample(event_time=1.0, tick=5))
-        self.assertEqual(len(clock._points), 0)
+        for k in range(5):
+            source.add(Sample(event_time=1.0 + k, tick=5 + k, recv_time=None))
+        self.assertEqual(clock.count, 0)
 
     def test_closing_stops_listening(self):
         source = Container()
         clock = TickClock(source)
         clock.close()
-        source.add(Sample(event_time=1.0, tick=5, recv_time=1.0))
-        self.assertEqual(len(clock._points), 0)
+        for k in range(10):
+            source.add(Sample(event_time=1.0 + k, tick=1000 * k, recv_time=1.0 + k))
+        self.assertEqual(clock.count, 0)
 
 
 class ResponseLagEstimatorTest(unittest.TestCase):
@@ -451,7 +452,6 @@ class ResponseLagEstimatorTest(unittest.TestCase):
         self.assertEqual([round(lag.command_time) for lag in estimator], [12])
 
     def test_works_on_the_imu_gyro_too(self):
-        from tellopy._internal.container import ImuContainer
         flight = Flight(self.PULSES, gyro_rate=10.0)
         sticks, imus = StickContainer(), ImuContainer()
         clock = TickClock(imus)
@@ -474,8 +474,9 @@ class ResponseLagEstimatorTest(unittest.TestCase):
         sticks, gyros = StickContainer(), GyroContainer()
         estimator = ResponseLagEstimator(sticks, gyros, TickClock(gyros))
         estimator.close()
-        sticks.add(StickSample(1.0, 0, 0, 0, 0.5, False))
-        self.assertEqual(estimator._quiet_since, None)
+        for sample in Flight(self.PULSES, gyro_rate=200.0).arrivals():
+            (sticks if isinstance(sample, StickSample) else gyros).add(sample)
+        self.assertEqual(len(estimator), 0)
 
 
 class TiltResponseTest(unittest.TestCase):
@@ -483,8 +484,11 @@ class TiltResponseTest(unittest.TestCase):
 
     PULSES = [(4 + 3.5 * k, 4.6 + 3.5 * k, (0.5, -0.5)[k % 2]) for k in range(10)]
 
-    def estimate(self, axis, rate, flight=None):
+    def estimate(self, axis, rate, flight=None, command_axis=None):
+        """An estimator for `axis` over a flight in which the imu tilts on that axis and the sticks
+        move on `command_axis` (the same axis, unless said otherwise)."""
         flight = flight or Flight(self.PULSES, noise=0.0, seed=5)
+        command_axis = command_axis or axis
         response = flight.gyro_response()
         rng = random.Random(9)
         tick_at = lambda t: int(3000000 + FREQ * t) & 0xffffffff
@@ -503,7 +507,7 @@ class TiltResponseTest(unittest.TestCase):
         for k in range(int(flight.duration * 30)):
             t = k / 30.0
             command = flight.command(t)
-            events.append((t, StickSample(t, command if axis == 'roll' else 0.0, command if axis == 'pitch' else 0.0,
+            events.append((t, StickSample(t, command if command_axis == 'roll' else 0.0, command if command_axis == 'pitch' else 0.0,
                                           0.0, 0.0, False)))
         for _, sample in sorted(events, key=lambda event: event[0]):
             (sticks if isinstance(sample, StickSample) else imus).add(sample)
@@ -525,14 +529,10 @@ class TiltResponseTest(unittest.TestCase):
         self.assertAlmostEqual(estimator.summary('midpoint').median, flight.expected()[1], delta=0.02)
 
     def test_a_command_on_another_axis_is_not_taken_for_this_one(self):
-        # the sticks move in pitch, the estimator listens for roll
-        flight = Flight(self.PULSES, noise=0.0, seed=5)
-        estimator, _ = self.estimate('roll', rate=100.0, flight=flight)
-        sticks, imus = StickContainer(), ImuContainer()
-        other = ResponseLagEstimator(sticks, imus, TickClock(imus), axis='pitch')
-        for k in range(300):
-            sticks.add(StickSample(k / 30.0, 0.5, 0.0, 0.0, 0.0, False))        # roll only
-        self.assertEqual((len(other), other._quiet_since is not None, other._pulse), (0, True, None))
+        # the sticks move in roll, the estimator listens for pitch
+        estimator, _ = self.estimate('pitch', rate=100.0, command_axis='roll')
+        self.assertEqual(len(estimator), 0)
+        self.assertEqual(dict(estimator.skipped), {})           # no pulse was even started
 
     def test_throttle_has_no_default_signal(self):
         sticks, imus = StickContainer(), ImuContainer()

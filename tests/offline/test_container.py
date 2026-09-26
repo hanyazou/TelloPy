@@ -1,7 +1,6 @@
 import unittest
 
-from tellopy._internal.container import Container, ImuContainer, StickContainer
-from tellopy._internal.logger import Logger
+from tellopy import Container, ImuContainer, Logger, StickContainer
 from tellopy._internal.tello import log as library_log
 
 from tests.support.fake_drone import log_record
