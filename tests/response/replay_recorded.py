@@ -72,7 +72,7 @@ for line in open(desktop + 'tello-lag-%s.txt' % stamp):
 latest = clock.latest()
 print('flight %s: %d readings and stick commands replayed; clock %.1f ms scatter, %d left out, %d resets' % (
     stamp, len(feed), latest.residual_std * 1e3 if latest is not None and latest.n else float('nan'),
-    clock.rejected, clock.resets))
+    latest.rejected if latest is not None else 0, latest.resets if latest is not None else 0))
 for name, estimator in estimators:
     replay = dict((round(lag.event_time, 3), (lag.onset, lag.midpoint)) for lag in estimator)
     said = live.get(name, {})
