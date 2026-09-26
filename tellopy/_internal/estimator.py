@@ -347,7 +347,7 @@ class Retimer(Estimator):
     def __init__(self, source, clock, max_shift=0.5, max_age=10.0, max_count=None, log=None):
         super(Retimer, self).__init__(max_age, max_count, log)
         self.SAMPLE = source.SAMPLE
-        self.max_shift = max_shift
+        self._max_shift = max_shift
         self._source_name = type(source).__name__
         self._clock_sample = None       # the newest the clock has published
         self._complained = False
@@ -372,7 +372,7 @@ class Retimer(Estimator):
             return sample
         later = _tick_difference(sample.tick, clock.tick) / clock.freq      # seconds after the clock's tick
         event_time = clock.host_at_tick + later
-        if self.max_shift < abs(event_time - sample.recv_time):
+        if self._max_shift < abs(event_time - sample.recv_time):
             return sample
         retimed = copy.copy(sample)
         retimed.event_time = event_time
@@ -408,7 +408,7 @@ class LagSample(Sample):
             self.axis, self.event_time, self.onset * 1e3, self.midpoint * 1e3, self.peak, self.noise)
 
 
-def tilt_angle(imu, axis):
+def _tilt_angle(imu, axis):
     """The roll or pitch angle (radians) of a LogImuAtti, from its quaternion (w, x, y, z)."""
     w, x, y, z = imu.q0, imu.q1, imu.q2, imu.q3
     if axis == 'roll':
@@ -442,11 +442,10 @@ class ResponseLagEstimator(Estimator):
     signal after it. Once the command is over (or `hold` seconds have passed)
     and the signal has settled, it looks for when the signal rose to 10% and
     to 50% of its peak, and reports the times since the command went out as a LagSample.
-    A pulse that doesn't give a clear answer is skipped, and counted in
-    `skipped` by the reason -- among them a gap in the gyro's readings
-    (packets do get lost) longer than `max_gap` at the moment of the
-    response, since a line drawn across a gap says nothing about when
-    the response began.
+    A pulse that doesn't give a clear answer is skipped: no LagSample is
+    made for it. One reason is a gap in the gyro's readings (packets do
+    get lost) longer than `max_gap` at the moment of the response, since
+    a line drawn across a gap says nothing about when the response began.
 
     sticks and source are Containers, clock a TickClock: the source's Samples
     are put on the host clock by the newest ClockSample it has published, the
@@ -469,30 +468,29 @@ class ResponseLagEstimator(Estimator):
     """
     SAMPLE = LagSample
     # the least peak (rad/s for yaw, rad for the angles) that counts as a response
-    MIN_PEAK = {'yaw': 0.2, 'roll': 0.03, 'pitch': 0.03}
+    _MIN_PEAK = {'yaw': 0.2, 'roll': 0.03, 'pitch': 0.03}
 
     def __init__(self, sticks, source, clock, axis='yaw', stage=0, signal=None, history=20, quiet=1.0,
                  command_threshold=0.15, release_threshold=0.05, hold=3.0, settle=0.3,
                  min_peak=None, min_snr=6.0, max_lag=0.8, max_gap=0.15, log=None):
         super(ResponseLagEstimator, self).__init__(max_age=600.0, log=log)
-        if signal is None and axis not in self.MIN_PEAK:
+        if signal is None and axis not in self._MIN_PEAK:
             raise ValueError('no default signal for the %s axis; pass signal=' % axis)
-        self.axis = axis
+        self._axis = axis
         self._signal = signal or self._default_signal
         if min_peak is None:
-            min_peak = self.MIN_PEAK.get(axis, 0.0)
-        self.clock = clock
-        self.stage = stage
-        self.quiet = quiet
-        self.command_threshold = command_threshold
-        self.release_threshold = release_threshold
-        self.hold = hold
-        self.settle = settle
-        self.min_peak = min_peak
-        self.min_snr = min_snr
-        self.max_lag = max_lag
-        self.max_gap = max_gap
-        self.skipped = collections.Counter()
+            min_peak = self._MIN_PEAK.get(axis, 0.0)
+        self._stage = stage
+        self._quiet = quiet
+        self._command_threshold = command_threshold
+        self._release_threshold = release_threshold
+        self._hold = hold
+        self._settle = settle
+        self._min_peak = min_peak
+        self._min_snr = min_snr
+        self._max_lag = max_lag
+        self._max_gap = max_gap
+        self._skipped = collections.Counter()
         self._recent = collections.deque(maxlen=history)
         self._gyro = collections.deque()        # (host time, the signal's value, clock_std)
         self._clock_sample = None               # the newest the clock has published
@@ -503,9 +501,9 @@ class ResponseLagEstimator(Estimator):
         self._listen(source, self._on_source)
 
     def _default_signal(self, sample):
-        if self.axis == 'yaw':
-            return sample.stages[self.stage][2] if isinstance(sample, LogGyro) else sample.gyro_z
-        return tilt_angle(sample, self.axis)
+        if self._axis == 'yaw':
+            return sample.stages[self._stage][2] if isinstance(sample, LogGyro) else sample.gyro_z
+        return _tilt_angle(sample, self._axis)
 
     # -- what it says ------------------------------------------------------
 
@@ -528,25 +526,25 @@ class ResponseLagEstimator(Estimator):
     # -- taking Samples in -------------------------------------------------
 
     def _on_stick(self, sample):
-        yaw, t = getattr(sample, self.axis), sample.event_time
+        yaw, t = getattr(sample, self._axis), sample.event_time
         with self._lock:
             pulse = self._pulse
             if pulse is None:
-                if abs(yaw) < self.release_threshold:
+                if abs(yaw) < self._release_threshold:
                     if self._quiet_since is None:
                         self._quiet_since = t
-                elif (self.command_threshold <= abs(yaw) and self._quiet_since is not None
-                        and self.quiet <= t - self._quiet_since):
+                elif (self._command_threshold <= abs(yaw) and self._quiet_since is not None
+                        and self._quiet <= t - self._quiet_since):
                     self._pulse = _Pulse(t, yaw)
                     self._quiet_since = None
                 else:
                     self._quiet_since = None        # moving, but not a clean start: wait for rest again
-            elif abs(yaw) < self.release_threshold:
+            elif abs(yaw) < self._release_threshold:
                 if pulse.release is None:
                     pulse.release = t
                     self._quiet_since = t
             elif pulse.release is not None or 0.1 < abs(yaw - pulse.command):
-                self.skipped['command changed'] += 1       # the command moved on before this one could be judged
+                self._skipped['command changed'] += 1       # the command moved on before this one could be judged
                 self._pulse = None
                 self._quiet_since = None
 
@@ -569,8 +567,8 @@ class ResponseLagEstimator(Estimator):
                 self._gyro.popleft()
             pulse = self._pulse
             if pulse is not None:
-                end = pulse.release if pulse.release is not None else pulse.command_time + self.hold
-                if end + self.settle <= t:
+                end = pulse.release if pulse.release is not None else pulse.command_time + self._hold
+                if end + self._settle <= t:
                     self._pulse = None
                     lag_sample = self._judge(pulse, end)
             if lag_sample is not None:
@@ -588,13 +586,13 @@ class ResponseLagEstimator(Estimator):
             return self._skip('no signal before the command')
         base = statistics.median(rest)
         noise = 1.4826 * statistics.median(abs(rate - base) for rate in rest)
-        response = [(t, rate - base) for t, rate, _ in gyro if t_cmd - 0.3 <= t <= end + self.settle]
+        response = [(t, rate - base) for t, rate, _ in gyro if t_cmd - 0.3 <= t <= end + self._settle]
         during = [(t, delta) for t, delta in response if t_cmd <= t]
         if len(during) < 5:
             return self._skip('too few readings')
         sign = 1 if max(during, key=lambda point: abs(point[1]))[1] > 0 else -1
         peak = _percentile([abs(delta) for _, delta in during], 85)
-        if peak < self.min_peak or peak < self.min_snr * noise:
+        if peak < self._min_peak or peak < self._min_snr * noise:
             return self._skip('no clear response')
         lags = []
         for fraction in (0.1, 0.5):
@@ -602,17 +600,17 @@ class ResponseLagEstimator(Estimator):
             if crossed is None:
                 return self._skip('no crossing')
             when, spacing = crossed
-            if self.max_gap < spacing:
+            if self._max_gap < spacing:
                 return self._skip('gap in the data')
             lags.append(when - t_cmd)
-        if not all(-0.05 <= lag <= self.max_lag for lag in lags):
+        if not all(-0.05 <= lag <= self._max_lag for lag in lags):
             return self._skip('implausible lag')
-        stds = [std for t, _, std in gyro if t_cmd - 0.3 <= t <= end + self.settle]
+        stds = [std for t, _, std in gyro if t_cmd - 0.3 <= t <= end + self._settle]
         clock_std = None if None in stds else max(stds)
-        return LagSample(t_cmd, lags[0], lags[1], sign * peak, noise, self.axis, clock_std)
+        return LagSample(t_cmd, lags[0], lags[1], sign * peak, noise, self._axis, clock_std)
 
     def _skip(self, reason):
-        self.skipped[reason] += 1
+        self._skipped[reason] += 1
         return None
 
     @staticmethod

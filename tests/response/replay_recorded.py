@@ -80,7 +80,7 @@ for name, estimator in estimators:
     diff = [1e3 * max(abs(replay[k][0] - said[k][0]), abs(replay[k][1] - said[k][1])) for k in both]
     print('%-16s live judged %2d | replay judged %2d | same pulses %2d%s | replay skipped %s' % (
         name, len(said), len(replay), len(both),
-        ' (largest difference %.1f ms)' % max(diff) if diff else '', dict(estimator.skipped) or 'none'))
+        ' (largest difference %.1f ms)' % max(diff) if diff else '', dict(estimator._skipped) or 'none'))
     m = estimator.summary('midpoint')
     if m.n:
         print('%-16s replay midpoint median %.0f ms (scatter %.0f)' % ('', m.median * 1e3, m.sigma * 1e3))

@@ -244,7 +244,7 @@ def main():
     finally:
         drone.quit()
         for name, estimator in estimators:
-            print('\n%s: judged %d pulses; skipped %s' % (name, len(estimator), dict(estimator.skipped) or 'none'))
+            print('\n%s: judged %d pulses; skipped %s' % (name, len(estimator), dict(estimator._skipped) or 'none'))
             for which in ('onset', 'midpoint'):
                 summary = estimator.summary(which)
                 if summary.n:
