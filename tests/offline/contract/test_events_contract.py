@@ -35,7 +35,7 @@ EXERCISED = {
     'EVENT_SAMPLE_GYRO': tellopy.LogGyro,
     'EVENT_SAMPLE_TOF': tellopy.LogTof,
     'EVENT_SAMPLE_MVO': tellopy.LogNewMvoFeedback,
-    'EVENT_SAMPLE_CONTROL': tellopy.LogControl,
+    'EVENT_SAMPLE_CONTROL': tellopy.LogRecord,          # a record whose columns are not understood yet is not a public class
     'EVENT_SAMPLE_RAW': tellopy.LogRecord,
 }
 
@@ -151,7 +151,7 @@ class EventContractTest(DroneTestCase):
                 else:
                     self.assertIsInstance(recv_time, float, name)
                 if data_type is not None:
-                    self.assertIs(type(data), data_type, name)
+                    self.assertIsInstance(data, data_type, name)
             for _, _, extra in catch_all:
                 self.assertEqual(extra, ['recv_time'], name)
 
