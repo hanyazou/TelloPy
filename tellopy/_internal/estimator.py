@@ -50,13 +50,16 @@ class ClockSample(Sample):
 
     The clock publishes one for every packet it takes in, whatever it knows at
     that point, so the newest one is the clock's present estimate. tick and
-    recv_time are those of the packet (event_time is recv_time: when this was
-    made); rejected and resets are the clock's running totals of packets left
-    out of the estimate and of times it started over.
+    recv_time are those of the newest packet the estimate rests on, and
+    event_time is that packet's recv_time: how recent the data behind the estimate
+    is. A packet left out of the estimate changes nothing but rejected. rejected and
+    resets are the clock's running totals of packets left out of the estimate and of
+    times it started over.
 
     n is how many packets the estimate rests on. 0 means there is no estimate --
     the clock is starting up, or has started over -- and then the fields below
-    are None. Otherwise: when the counter read `tick`, host time was
+    are None, and tick, recv_time and event_time are those of the packet that came.
+    Otherwise: when the counter read `tick`, host time was
     host_at_tick, give or take host_at_tick_std seconds; the counter runs at freq
     ticks per second, give or take freq_std. Those are how far the estimate can be
     trusted, not the scatter of the packets' arrival, which is residual_std (also
@@ -130,7 +133,7 @@ class TickClock(Estimator):
         self.warmup_tolerance = warmup_tolerance
         self.provisional_samples = provisional_samples
         self._candidates = []       # (unwrapped tick, recv_time) while starting up
-        self._provisional = None    # (offset, n, sigma, centre) of the rough estimate, once there is one
+        self._provisional = None    # (offset, n, sigma, centre, newest) of the rough estimate, once there is one
         self._started = False
         self.window = window
         self.min_samples = min_samples
@@ -194,7 +197,7 @@ class TickClock(Estimator):
         return self._clock_sample(unwrapped, recv_time, tick)
 
     def _clock_sample(self, unwrapped, recv_time, tick):
-        """What the clock knows now, at this packet's tick."""
+        """What the clock knows now, at the newest packet it rests on; if it knows nothing, at this one."""
         totals = dict(rejected=self.rejected, resets=self.resets)
         fit = self._fit() if self._started and self.min_samples <= len(self._points) else None
         if fit is not None:
@@ -202,15 +205,17 @@ class TickClock(Estimator):
             n = len(self._points)
             sx, _, sxx, _, _ = self._sums
             spread = sxx - sx * sx / n              # how widely the points are spread over ticks
-            x = unwrapped - self._x0
+            x, y = self._points[-1]                 # the newest packet in the fit
             freq = 1.0 / slope
-            return ClockSample(tick, recv_time, n=n, host_at_tick=self._y0 + intercept + slope * x, freq=freq,
+            return ClockSample(int(self._x0 + x) & 0xffffffff, self._y0 + y, n=n,
+                               host_at_tick=self._y0 + intercept + slope * x, freq=freq,
                                host_at_tick_std=std * math.sqrt(1.0 / n + (x - sx / n) ** 2 / spread),
                                freq_std=freq * freq * std / math.sqrt(spread), residual_std=std, **totals)
         if self._provisional is not None:
-            offset, n, sigma, centre = self._provisional
-            drift = abs(unwrapped - centre) / self.nominal_freq * self.nominal_freq_error
-            return ClockSample(tick, recv_time, n=n, host_at_tick=offset + unwrapped / self.nominal_freq,
+            offset, n, sigma, centre, (newest, newest_recv_time) = self._provisional
+            drift = abs(newest - centre) / self.nominal_freq * self.nominal_freq_error
+            return ClockSample(int(newest) & 0xffffffff, newest_recv_time, n=n,
+                               host_at_tick=offset + newest / self.nominal_freq,
                                freq=self.nominal_freq, host_at_tick_std=math.sqrt(sigma * sigma / n + drift * drift),
                                freq_std=self.nominal_freq * self.nominal_freq_error, residual_std=sigma, **totals)
         return ClockSample(tick, recv_time, **totals)
@@ -275,8 +280,9 @@ class TickClock(Estimator):
         return True
 
     def _rough_estimate(self, agreeing):
-        """(offset, n, sigma, centre) from a few candidates that agree: when the counter read
-        zero, if it ran at its nominal rate; how many; their scatter; and the tick they centre on."""
+        """(offset, n, sigma, centre, newest) from a few candidates that agree: when the counter
+        read zero, if it ran at its nominal rate; how many; their scatter; the tick they centre on;
+        and the newest of them, (unwrapped tick, recv_time)."""
         for _ in range(2):      # twice: leave out those far from the rest, and take the scatter again
             offsets = [i for _, i in agreeing]
             mean = statistics.mean(offsets)
@@ -288,7 +294,7 @@ class TickClock(Estimator):
         offsets = [i for _, i in agreeing]
         return (statistics.mean(offsets), len(agreeing),
                 max(statistics.stdev(offsets), self.reject_floor),
-                statistics.mean(c[0] for c, _ in agreeing))
+                statistics.mean(c[0] for c, _ in agreeing), agreeing[-1][0])
 
     def _recenter(self, dx, dy):
         """Move the origin to the newest point, so numbers stay small however long this runs."""
@@ -377,8 +383,8 @@ class Retimer(Estimator):
 class LagSample(Sample):
     """How long a sensor took to respond to one stick command.
 
-    event_time is when the command went out; axis is which stick it was
-    (yaw, roll, pitch). onset and midpoint are the seconds from then until
+    event_time is when the command it was measured from went out, the event the
+    estimate rests on; axis is which stick it was (yaw, roll, pitch). onset and midpoint are the seconds from then until
     the sensor signal reached 10% and 50% of its peak response; peak (signed
     like the signal) and noise (its scatter while still) say how clear that
     response was.

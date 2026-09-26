@@ -181,7 +181,7 @@ class TickClockTest(unittest.TestCase):
         self.assertEqual(heard[-1].n, 11)
         self.assertAlmostEqual(heard[-1].host_at_tick, 1.2 + 10 / 30.0, delta=2e-3)
 
-    def test_a_late_packet_is_still_answered_with_the_estimate(self):
+    def test_a_late_packet_is_answered_with_the_same_estimate(self):
         source = Container()
         clock = TickClock(source)
         tick_at = lambda k: int(1000000 + FREQ * k / 30.0)
@@ -192,9 +192,39 @@ class TickClockTest(unittest.TestCase):
         source.add(Sample(event_time=2.1, tick=tick_at(61), recv_time=61 / 30.0))
         after = clock.latest()
         self.assertEqual((before.rejected, after.rejected), (0, 1))
-        self.assertEqual(after.n, before.n)
-        self.assertEqual(after.tick, tick_at(60))
-        self.assertAlmostEqual(after.host_at_tick, 60 / 30.0, delta=1e-3)   # at its own tick, not where it arrived
+        self.assertIsNot(after, before)
+        # the estimate is what it was, and rests on the same newest packet
+        for name in ('n', 'tick', 'recv_time', 'event_time', 'host_at_tick', 'freq', 'host_at_tick_std', 'freq_std'):
+            self.assertEqual(getattr(after, name), getattr(before, name), name)
+        self.assertEqual(after.tick, tick_at(59))
+        self.assertAlmostEqual(after.host_at_tick, 59 / 30.0, delta=1e-3)
+
+    def test_packets_left_out_do_not_make_the_estimate_look_newer(self):
+        source = Container()
+        clock = TickClock(source)
+        tick_at = lambda k: int(1000000 + FREQ * k / 30.0)
+        for k in range(900):
+            source.add(Sample(event_time=k / 30.0, tick=tick_at(k), recv_time=k / 30.0))
+        late = lambda k: Sample(event_time=k / 30.0 + 0.4, tick=tick_at(k), recv_time=k / 30.0 + 0.4)
+        source.add(late(900))
+        before = clock.latest()                         # the newest packet is held until the next arrives
+        for k in range(901, 910):                       # ten late packets in a row, fewer than it takes to start over
+            source.add(late(k))
+        after = clock.latest()
+        self.assertGreater(after.rejected, before.rejected)
+        self.assertEqual(after.resets, 0)
+        self.assertEqual((after.n, after.event_time, after.tick), (before.n, before.event_time, before.tick))
+        heard = list(clock)[-5:]
+        self.assertTrue(all(s.event_time == before.event_time for s in heard))
+
+    def test_without_an_estimate_a_sample_is_stamped_with_the_packet_that_came(self):
+        source = Container()
+        clock = TickClock(source)
+        for k in range(3):
+            source.add(Sample(event_time=1.0 + k, tick=1000 + k * 1000, recv_time=1.0 + k))
+        first = list(clock)[0]
+        self.assertEqual(first.n, 0)
+        self.assertEqual((first.tick, first.recv_time, first.event_time), (1000, 1.0, 1.0))
 
     def test_it_says_when_it_has_lost_its_estimate(self):
         heard = []
