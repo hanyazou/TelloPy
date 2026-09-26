@@ -3,9 +3,10 @@ import math
 import random
 import unittest
 
-from tellopy import (ClockSample, Container, GyroContainer, ImuContainer, ResponseLagEstimator,
+from tellopy import (ClockSample, Container, GyroContainer, ImuContainer, LagSample, ResponseLagEstimator,
                      StickContainer, StickSample, TickClock)
 
+from tests.support import lags
 from tests.support.synthetic import DELAY, FREQ, Flight, YAW_PULSES, imu_sample, tick_at, yaw_estimator
 
 
@@ -22,11 +23,11 @@ class ResponseLagEstimatorTest(unittest.TestCase):
         estimator = self.estimate(flight)
         onset, midpoint = flight.expected()
         self.assertEqual(len(estimator), len(self.PULSES))
-        summary_onset, summary_mid = estimator.summary('onset'), estimator.summary('midpoint')
-        self.assertAlmostEqual(summary_onset.median, onset, delta=0.003)
-        self.assertAlmostEqual(summary_mid.median, midpoint, delta=0.003)
-        self.assertAlmostEqual(summary_onset.mean, onset, delta=0.003)
-        self.assertLess(summary_onset.sigma, 0.005)
+        self.assertTrue(all(isinstance(lag, LagSample) for lag in estimator))
+        self.assertAlmostEqual(lags.median(estimator, 'onset'), onset, delta=0.003)
+        self.assertAlmostEqual(lags.median(estimator, 'midpoint'), midpoint, delta=0.003)
+        self.assertAlmostEqual(sum(lag.onset for lag in estimator) / len(estimator), onset, delta=0.003)
+        self.assertLess(lags.scatter(estimator, 'onset'), 0.005)
         for lag in estimator:
             self.assertAlmostEqual(lag.onset, onset, delta=0.010)
             self.assertAlmostEqual(lag.midpoint, midpoint, delta=0.010)
@@ -55,8 +56,8 @@ class ResponseLagEstimatorTest(unittest.TestCase):
         self.arrive(flight, sticks, gyros)
         onset, midpoint = flight.expected()
         self.assertEqual(len(estimator), len(self.PULSES))
-        self.assertAlmostEqual(estimator.summary('onset').median, onset, delta=0.003)
-        self.assertAlmostEqual(estimator.summary('midpoint').median, midpoint, delta=0.003)
+        self.assertAlmostEqual(lags.median(estimator, 'onset'), onset, delta=0.003)
+        self.assertAlmostEqual(lags.median(estimator, 'midpoint'), midpoint, delta=0.003)
         self.assertTrue(all(abs(lag.clock_std - 0.004) < 1e-9 for lag in estimator))
 
     def test_the_worst_clock_std_of_the_readings_counts(self):
@@ -81,7 +82,7 @@ class ResponseLagEstimatorTest(unittest.TestCase):
             self.arrive(flight, sticks, gyros)
             self.assertGreaterEqual(len(estimator), len(self.PULSES) - 2)
             self.assertTrue(all(lag.clock_std is None for lag in estimator))
-            self.assertAlmostEqual(estimator.summary('midpoint').median, flight.expected()[1], delta=0.02)
+            self.assertAlmostEqual(lags.median(estimator, 'midpoint'), flight.expected()[1], delta=0.02)
 
     def test_direction_and_size_of_the_command_make_no_difference(self):
         flight = Flight(self.PULSES)
@@ -97,7 +98,7 @@ class ResponseLagEstimatorTest(unittest.TestCase):
     def test_a_slower_drone_reads_as_slower(self):
         fast = self.estimate(Flight(self.PULSES, delay=0.05))
         slow = self.estimate(Flight(self.PULSES, delay=0.15))
-        self.assertAlmostEqual(slow.summary('onset').median - fast.summary('onset').median, 0.10, delta=0.015)
+        self.assertAlmostEqual(lags.median(slow, 'onset') - lags.median(fast, 'onset'), 0.10, delta=0.015)
 
     def test_a_gap_in_the_readings_where_the_response_begins_is_not_interpolated_across(self):
         # 200 ms of readings lost right as the pulse at 11.0 s starts to take effect
@@ -117,8 +118,6 @@ class ResponseLagEstimatorTest(unittest.TestCase):
     def test_no_response_means_no_estimate(self):
         estimator = self.estimate(Flight(self.PULSES, respond=False))
         self.assertEqual(len(estimator), 0)
-        self.assertEqual(estimator.summary().n, 0)
-        self.assertIsNone(estimator.summary().median)
 
     def test_commands_that_did_not_cause_the_response_give_no_plausible_lag(self):
         # the same response, but every command is seen 0.5s *after* it happened
@@ -148,7 +147,7 @@ class ResponseLagEstimatorTest(unittest.TestCase):
             else:
                 imus.add(imu_sample(sample.tick, sample.recv_time, gyro_z=sample.stages[0][2]))
         self.assertGreaterEqual(len(estimator), len(self.PULSES) - 2)
-        self.assertAlmostEqual(estimator.summary('midpoint').median, flight.expected()[1], delta=0.02)
+        self.assertAlmostEqual(lags.median(estimator, 'midpoint'), flight.expected()[1], delta=0.02)
 
     def test_closing_stops_listening(self):
         sticks, gyros = StickContainer(), GyroContainer()
@@ -198,15 +197,15 @@ class TiltResponseTest(unittest.TestCase):
             estimator, flight = self.estimate(axis, rate=100.0)
             onset, midpoint = flight.expected()
             self.assertEqual(len(estimator), len(self.PULSES), axis)
-            self.assertAlmostEqual(estimator.summary('onset').median, onset, delta=0.006)
-            self.assertAlmostEqual(estimator.summary('midpoint').median, midpoint, delta=0.006)
+            self.assertAlmostEqual(lags.median(estimator, 'onset'), onset, delta=0.006)
+            self.assertAlmostEqual(lags.median(estimator, 'midpoint'), midpoint, delta=0.006)
             self.assertEqual({lag.axis for lag in estimator}, {axis})
             self.assertTrue(str(estimator.latest()).startswith(axis))
 
     def test_at_the_imu_rate_the_midpoint_is_still_good(self):
         estimator, flight = self.estimate('roll', rate=10.0)
         self.assertGreaterEqual(len(estimator), len(self.PULSES) - 1)
-        self.assertAlmostEqual(estimator.summary('midpoint').median, flight.expected()[1], delta=0.02)
+        self.assertAlmostEqual(lags.median(estimator, 'midpoint'), flight.expected()[1], delta=0.02)
 
     def test_a_command_on_another_axis_is_not_taken_for_this_one(self):
         # the sticks move in roll, the estimator listens for pitch

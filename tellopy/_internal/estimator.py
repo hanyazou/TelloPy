@@ -421,9 +421,6 @@ def _percentile(values, p):
     return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
 
 
-LagSummary = collections.namedtuple('LagSummary', 'median sigma mean std n')
-
-
 class _Pulse(object):
     def __init__(self, command_time, command):
         self.command_time = command_time
@@ -467,7 +464,7 @@ class ResponseLagEstimator(Estimator):
     # the least peak (rad/s for yaw, rad for the angles) that counts as a response
     _MIN_PEAK = {'yaw': 0.2, 'roll': 0.03, 'pitch': 0.03}
 
-    def __init__(self, sticks, source, clock, axis='yaw', stage=0, signal=None, history=20, quiet=1.0,
+    def __init__(self, sticks, source, clock, axis='yaw', stage=0, signal=None, quiet=1.0,
                  command_threshold=0.15, release_threshold=0.05, hold=3.0, settle=0.3,
                  min_peak=None, min_snr=6.0, max_lag=0.8, max_gap=0.15, log=None):
         super(ResponseLagEstimator, self).__init__(max_age=600.0, log=log)
@@ -488,7 +485,6 @@ class ResponseLagEstimator(Estimator):
         self._max_lag = max_lag
         self._max_gap = max_gap
         self._skipped = collections.Counter()
-        self._recent = collections.deque(maxlen=history)
         self._gyro = collections.deque()        # (host time, the signal's value, clock_std)
         self._clock_sample = None               # the newest the clock has published
         self._pulse = None
@@ -503,22 +499,6 @@ class ResponseLagEstimator(Estimator):
         return _tilt_angle(sample, self._axis)
 
     # -- what it says ------------------------------------------------------
-
-    def summary(self, which='midpoint'):
-        """The recent lags, `onset` or `midpoint`, in seconds, as a LagSummary.
-
-        `median` and `sigma` (the median absolute deviation, scaled to be
-        comparable with a standard deviation) are what to go by: the lags
-        have a heavy tail -- now and then the command is slow to arrive --
-        which drags `mean` and `std` around. n is how many there are.
-        """
-        with self._lock:
-            values = [getattr(sample, which) for sample in self._recent]
-        if not values:
-            return LagSummary(None, None, None, None, 0)
-        median = statistics.median(values)
-        sigma = 1.4826 * statistics.median(abs(value - median) for value in values)
-        return LagSummary(median, sigma, statistics.mean(values), statistics.pstdev(values), len(values))
 
     # -- taking Samples in -------------------------------------------------
 
@@ -568,8 +548,6 @@ class ResponseLagEstimator(Estimator):
                 if end + self._settle <= t:
                     self._pulse = None
                     lag_sample = self._judge(pulse, end)
-            if lag_sample is not None:
-                self._recent.append(lag_sample)
         if lag_sample is not None:
             self.add(lag_sample)
 

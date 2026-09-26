@@ -55,6 +55,7 @@ switch it on, and run this as soon as its light is blinking yellow.
 import argparse
 import datetime
 import os
+import statistics
 import sys
 import threading
 import time
@@ -62,6 +63,7 @@ import time
 # so that it runs from a clone of the repository, installed or not
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 import tellopy
+from tests.support import lags
 
 # axis -> (name, speed, seconds) of the pulses, repeated
 PATTERNS = {
@@ -70,6 +72,7 @@ PATTERNS = {
     'pitch': [('forward', 50, 0.6), ('backward', 50, 0.6)],
 }
 # the Tello method that sets each command
+RECENT = 20                 # how many of the latest lags the running median goes by
 CLOCK_GOOD_TO = 0.010        # seconds: the flight waits until the clock's estimate is good to this
 
 METHODS = {'cw': 'clockwise', 'ccw': 'counter_clockwise', 'right': 'right', 'left': 'left',
@@ -194,9 +197,10 @@ def main():
             print('%-11s %s' % (name, lag))
             files.write('lag', '%s %.6f %.6f %.6f %.6f\n' % (
                 name, lag.event_time, lag.onset, lag.midpoint, lag.peak))
-            onset, midpoint = estimator.summary('onset'), estimator.summary('midpoint')
+            recent = list(estimator)[-RECENT:]
             print('            last %d: onset %.0f +- %.0f ms, midpoint %.0f +- %.0f ms (median +- scatter)' % (
-                onset.n, onset.median * 1e3, onset.sigma * 1e3, midpoint.median * 1e3, midpoint.sigma * 1e3))
+                len(recent), lags.median(recent, 'onset') * 1e3, lags.scatter(recent, 'onset') * 1e3,
+                lags.median(recent, 'midpoint') * 1e3, lags.scatter(recent, 'midpoint') * 1e3))
         estimator.subscribe(on_lag)
     for name, estimator in estimators:
         report(name, estimator)
@@ -245,11 +249,12 @@ def main():
         drone.quit()
         for name, estimator in estimators:
             print('\n%s: judged %d pulses; skipped %s' % (name, len(estimator), dict(estimator._skipped) or 'none'))
-            for which in ('onset', 'midpoint'):
-                summary = estimator.summary(which)
-                if summary.n:
-                    print('  %-8s median %.0f ms, scatter %.0f ms   (mean %.0f, std %.0f; last %d)' % (
-                        which, summary.median * 1e3, summary.sigma * 1e3, summary.mean * 1e3, summary.std * 1e3, summary.n))
+            recent = list(estimator)[-RECENT:]
+            for which in ('onset', 'midpoint') if recent else ():
+                values = [getattr(lag, which) for lag in recent]
+                print('  %-8s median %.0f ms, scatter %.0f ms   (mean %.0f, std %.0f; last %d)' % (
+                    which, lags.median(recent, which) * 1e3, lags.scatter(recent, which) * 1e3,
+                    statistics.mean(values) * 1e3, statistics.pstdev(values) * 1e3, len(recent)))
         print('clock: %.1f ms scatter, %d packets left out, started over %d times' % (
             clock.latest().residual_std * 1e3 if clock_ready() else float('nan'),
             clock.latest().rejected if clock.latest() else 0, clock.latest().resets if clock.latest() else 0))

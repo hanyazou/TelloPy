@@ -16,6 +16,7 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
+from tests.support import lags
 from tellopy import (GyroContainer, ImuContainer, LogGyro, LogImuAtti, ResponseLagEstimator, StickContainer,
                      StickSample, TickClock)
 
@@ -81,9 +82,9 @@ for name, estimator in estimators:
     print('%-16s live judged %2d | replay judged %2d | same pulses %2d%s | replay skipped %s' % (
         name, len(said), len(replay), len(both),
         ' (largest difference %.1f ms)' % max(diff) if diff else '', dict(estimator._skipped) or 'none'))
-    m = estimator.summary('midpoint')
-    if m.n:
-        print('%-16s replay midpoint median %.0f ms (scatter %.0f)' % ('', m.median * 1e3, m.sigma * 1e3))
+    recent = list(estimator)[-20:]
+    if recent:
+        print('%-16s replay midpoint median %.0f ms (scatter %.0f)' % ('', lags.median(recent) * 1e3, lags.scatter(recent) * 1e3))
         for label, pick in (('response > 0 (cw / right / forward)', lambda p: p > 0), ('response < 0 (ccw / left / backward)', lambda p: p < 0)):
             v = [lag.midpoint * 1e3 for lag in estimator if pick(lag.peak)]
             if v:

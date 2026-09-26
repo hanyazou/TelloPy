@@ -7,7 +7,7 @@ https://gobot.io/blog/2018/04/20/hello-tello-hacking-drones-with-go
 """
 from tellopy._internal.tello import Tello
 from tellopy._internal.container import Container, GyroContainer, ImuContainer, StickContainer
-from tellopy._internal.estimator import ClockSample, Estimator, LagSample, LagSummary, ResponseLagEstimator, Retimer, TickClock
+from tellopy._internal.estimator import ClockSample, Estimator, LagSample, ResponseLagEstimator, Retimer, TickClock
 from tellopy._internal.logger import Logger
 from tellopy._internal.protocol import (
     CalibrationStatus, FlightData, LogControl, LogData, LogGyro, LogImuAtti, LogNewMvoFeedback, LogRecord, LogTof)
@@ -18,8 +18,8 @@ __all__ = [
     "Tello",
     "Container", "GyroContainer", "ImuContainer", "StickContainer",
     "Estimator", "ResponseLagEstimator", "Retimer", "TickClock",
-    "Sample", "CommandSample", "StickSample", "ClockSample", "LagSample", "LagSummary",
     "LogRecord", "LogImuAtti", "LogNewMvoFeedback", "LogGyro", "LogTof", "LogControl",
+    "Sample", "CommandSample", "StickSample", "ClockSample", "LagSample",
     "CalibrationStatus", "FlightData", "LogData", "VideoStream",
     "Logger",
 ]
