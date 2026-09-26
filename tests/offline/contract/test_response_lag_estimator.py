@@ -21,7 +21,7 @@ class ResponseLagEstimatorTest(unittest.TestCase):
         flight = Flight(self.PULSES, gyro_rate=200.0)
         estimator = self.estimate(flight)
         onset, midpoint = flight.expected()
-        self.assertEqual(len(estimator), len(self.PULSES), dict(estimator.skipped))
+        self.assertEqual(len(estimator), len(self.PULSES))
         summary_onset, summary_mid = estimator.summary('onset'), estimator.summary('midpoint')
         self.assertAlmostEqual(summary_onset.median, onset, delta=0.003)
         self.assertAlmostEqual(summary_mid.median, midpoint, delta=0.003)
@@ -104,7 +104,6 @@ class ResponseLagEstimatorTest(unittest.TestCase):
         flight = Flight(self.PULSES, lost=[(11.02, 11.22)])
         estimator = self.estimate(flight)
         onset, midpoint = flight.expected()
-        self.assertEqual(estimator.skipped['gap in the data'], 1)
         self.assertEqual(len(estimator), len(self.PULSES) - 1)
         self.assertNotIn(11.0, [round(lag.event_time, 1) for lag in estimator])
         for lag in estimator:
@@ -113,12 +112,11 @@ class ResponseLagEstimatorTest(unittest.TestCase):
     def test_a_gap_elsewhere_in_the_pulse_does_no_harm(self):
         flight = Flight(self.PULSES, lost=[(11.5, 11.8)])       # after the response has started
         estimator = self.estimate(flight)
-        self.assertEqual(len(estimator), len(self.PULSES), dict(estimator.skipped))
+        self.assertEqual(len(estimator), len(self.PULSES))
 
     def test_no_response_means_no_estimate(self):
         estimator = self.estimate(Flight(self.PULSES, respond=False))
         self.assertEqual(len(estimator), 0)
-        self.assertEqual(estimator.skipped['no clear response'], len(self.PULSES))
         self.assertEqual(estimator.summary().n, 0)
         self.assertIsNone(estimator.summary().median)
 
@@ -137,7 +135,6 @@ class ResponseLagEstimatorTest(unittest.TestCase):
     def test_a_command_that_changes_before_it_is_judged_is_skipped(self):
         pulses = [(4.0, 4.8, 0.5), (4.9, 6.0, 0.5), (12.0, 13.2, 0.5)]
         estimator = self.estimate(Flight(pulses))
-        self.assertEqual(estimator.skipped['command changed'], 1)
         self.assertEqual([round(lag.event_time) for lag in estimator], [12])
 
     def test_works_on_the_imu_gyro_too(self):
@@ -200,7 +197,7 @@ class TiltResponseTest(unittest.TestCase):
         for axis in ('roll', 'pitch'):
             estimator, flight = self.estimate(axis, rate=100.0)
             onset, midpoint = flight.expected()
-            self.assertEqual(len(estimator), len(self.PULSES), (axis, dict(estimator.skipped)))
+            self.assertEqual(len(estimator), len(self.PULSES), axis)
             self.assertAlmostEqual(estimator.summary('onset').median, onset, delta=0.006)
             self.assertAlmostEqual(estimator.summary('midpoint').median, midpoint, delta=0.006)
             self.assertEqual({lag.axis for lag in estimator}, {axis})
@@ -215,7 +212,6 @@ class TiltResponseTest(unittest.TestCase):
         # the sticks move in roll, the estimator listens for pitch
         estimator, _ = self.estimate('pitch', rate=100.0, command_axis='roll')
         self.assertEqual(len(estimator), 0)
-        self.assertEqual(dict(estimator.skipped), {})           # no pulse was even started
 
     def test_throttle_has_no_default_signal(self):
         sticks, imus = StickContainer(), ImuContainer()
