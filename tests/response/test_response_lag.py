@@ -80,7 +80,7 @@ class ResponseLagTest(unittest.TestCase):
                     thread.join(5.0)
             fake.stop()
             dispatcher.signals.clear()
-            dispatcher.accepted_kwargs.clear()
+            dispatcher._accepted.clear()
         self.home = home
         return output.getvalue(), fake, [line.split()[1] for line in events if line]
 
