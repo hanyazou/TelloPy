@@ -2,7 +2,8 @@
 import math
 import random
 
-from tellopy import LogGyro, LogImuAtti, Sample, StickSample
+from tellopy import (GyroContainer, LogGyro, LogImuAtti, ResponseLagEstimator, Sample, StickContainer,
+                     StickSample, TickClock)
 
 FREQ = 2344050.0
 DELAY = 0.020           # mean delay of a packet: what the fitted line has in it
@@ -109,3 +110,16 @@ class Flight(object):
             events.append((t, StickSample(t, 0.0, 0.0, 0.0, yaw, False)))
         events.sort(key=lambda event: event[0])
         return [sample for _, sample in events]
+
+
+YAW_PULSES = [(4 + 3.5 * k, 5.2 + 3.5 * k, (0.5, -0.5, 1.0, -1.0)[k % 4]) for k in range(12)]
+
+
+def yaw_estimator(flight, command_shift=0.0, **options):
+    """A ResponseLagEstimator on the gyro's yaw rate, fed with a synthetic flight."""
+    sticks, gyros = StickContainer(), GyroContainer()
+    clock = TickClock(gyros)
+    estimator = ResponseLagEstimator(sticks, gyros, clock, **options)
+    for sample in flight.arrivals(command_shift):
+        (sticks if isinstance(sample, StickSample) else gyros).add(sample)
+    return estimator
