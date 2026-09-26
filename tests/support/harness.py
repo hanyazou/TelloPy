@@ -58,11 +58,11 @@ class DroneTestCase(unittest.TestCase):
         self._threads_before = set(threading.enumerate())
         self._receivers_before = len(dispatcher.signals.get(dispatcher.signal.All, []))
 
-    def start_drone(self):
-        """Create the Tello (not yet connected) and the fake it talks to."""
+    def start_drone(self, **options):
+        """Create the Tello (not yet connected), with the options given, and the fake it talks to."""
         video_port = free_udp_port()
         self.fake = FakeDrone(video_port)
-        self.drone = Tello(port=free_udp_port(), video_port=video_port)
+        self.drone = Tello(port=free_udp_port(), video_port=video_port, **options)
         self.drone.tello_addr = self.fake.address
         return self.drone
 
