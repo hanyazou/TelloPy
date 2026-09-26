@@ -81,46 +81,43 @@ class ClockSample(Sample):
 
 
 class TickClock(Estimator):
-    """Fits host_time = a + b * tick to the (tick, recv_time) of every Sample
-    of its inputs, over a sliding window, and publishes what it finds as ClockSamples.
+    """Works out how a device's tick counter maps to host time, from the packets that carry the ticks.
 
-    The packets carrying the ticks arrive with a variable delay, so
-    recv_time on its own is a jittery time; the tick counter is not, and
-    the line through the (tick, recv_time) points is what it is worth in
-    host time. What this cannot know is the constant part of the delay (the
-    least time a packet takes), which stays in the intercept: host times
-    from here are on the recv_time clock, not corrected for it.
+    It is given Containers of Samples that have a tick and a recv_time (in flight,
+    the IMU's) and publishes a ClockSample for every packet it takes in; the newest
+    is its present estimate. What a ClockSample says, and how far it can be trusted,
+    is defined there.
 
-    Samples arrive and leave a running set of sums, so each costs the same
-    however long the window is. A Sample that lands far from the current
-    line (a late packet) is left out of the fit; if that keeps happening the
-    line is taken to be wrong -- the clock jumped -- and the window starts over.
+    The estimate is on the recv_time clock: it takes the jitter of the packets'
+    arrival out of the time of a tick, but the constant part of their delay (the
+    least time a packet takes) stays in it, as it cannot be known from the packets alone.
 
-    The counter is 32 bits and wraps every ~30 minutes; it is unwrapped here.
+    It copes with what a drone does. The counter is 32 bits and wraps every ~30
+    minutes. A packet carries several records, all with the one arrival time; only
+    the freshest record of a packet counts, whichever Containers it came from. The
+    first records after connecting can be stale, from just after the drone booted, and
+    are left out. A packet that arrives late is left out, and changes nothing in the
+    estimate but the count of those left out. If the arrival times jump, the clock
+    starts over. The ClockSamples say what happened (n, rejected, resets).
 
-    A packet carries several records, all with the one arrival time but with
-    ticks that reach back some way; the older a record, the longer it has
-    waited to be sent, so its arrival time is worth less. Only the freshest
-    (highest tick) Sample of each packet is used, whichever Containers the
-    Samples came from, so that giving the clock more inputs does not shift it.
-    (Samples that share a recv_time are taken to be from one packet; the newest
-    packet is held back until the next one arrives.)
-
-    Starting up needs care: when a drone is connected to, the first Samples can be
-    stale -- old records from just after the drone booted, whose ticks are far
-    behind the counter's present value -- and fitting a line through those and the
-    real ones gives nonsense for as long as they stay in the window. So the clock
-    doesn't start until Samples agree with each other and with the counter's
-    known rate (`nominal_freq`) to within `warmup_tolerance` seconds; the ones that
-    don't are discarded. The same start-up follows a reset.
-
-    What it knows comes out as a ClockSample for every packet, in three stages.
-    Until `provisional_samples` Samples agree there is no estimate (n is 0).
-    Then there is a rough one: the rate is taken to be the nominal one,
-    give or take `nominal_freq_error` (a fraction), and only the offset is worked
-    out, from the Samples so far. Once `min_samples` have agreed a line is fitted,
-    and its rate is measured too.
+    window is how many seconds of packets the estimate is made from. Before enough
+    packets agree with each other and with `nominal_freq`, the counter's known rate in
+    ticks per second, to within `warmup_tolerance` seconds, there is no estimate (n is 0):
+    `provisional_samples` of them give a rough one, which takes the rate to be
+    the nominal one give or take `nominal_freq_error` (a fraction), and `min_samples` a
+    line whose rate is measured. reject_sigmas and reject_floor say how far from the
+    estimate a packet must be to be left out, and max_consecutive_rejects how many in a
+    row make the clock start over.
     """
+    # How it works: the line host_time = a + b * tick is fitted to the (tick, recv_time)
+    # points of the window by least squares, from running sums that are updated as points
+    # enter and leave, so a packet costs the same however long the window is; the origin
+    # of the points is moved near the newest now and then (_RECENTER_TICKS) so that the
+    # numbers stay small. Samples that share a recv_time are taken to be from one packet,
+    # and the newest packet is held back until the next arrives, to see which of its
+    # records is the freshest. To start up, each candidate implies when the counter read
+    # zero, if it ran at the nominal rate; real ones agree on that, a stale one is off by
+    # however stale it is.
     SAMPLE = ClockSample
     _RECENTER_TICKS = 2e8       # how far the origin may lag behind the newest tick, for the numbers' sake
 
@@ -322,27 +319,25 @@ class TickClock(Estimator):
 
 
 class Retimer(Estimator):
-    """Republishes the Samples of a Container with event_time worked out from their tick.
+    """Republishes the Samples of a Container with a better event_time, worked out from their tick.
 
     A raw Sample's event_time is its recv_time, which jitters with the delay of the
-    packet that carried it. Given a TickClock's ClockSamples (`clock`), a Sample
-    from `source` goes out as a copy of the same class: event_time is the host time
-    of its tick, event_time_std is how far that can be trusted (seconds) and
-    everything else, recv_time and tick included, is as it was. The Sample that came
-    in is not changed.
+    packet that carried it. A Retimer takes `source`, a Container of Samples that
+    have a tick, and `clock`, a Container of a TickClock's ClockSamples. For every
+    Sample of `source` it publishes a copy of the same class, with event_time the
+    host time of its tick and event_time_std how far that can be trusted, in seconds.
+    Everything else is as it was, and the Sample that came in is not changed.
 
-    event_time_std is the ClockSample's uncertainty at its own tick, and the rate's
-    uncertainty times the distance in ticks from there, taken together.
+    Every Sample is republished. One that can't be retimed goes out as it came, with
+    event_time_std None, so event_time_std says whether a Sample was retimed. That is
+    so when the clock has no estimate at the moment, when the estimate does not fit the
+    Sample -- its time comes out more than `max_shift` seconds from when the Sample
+    arrived, which a measurement cannot be -- and when the Sample has no tick or no
+    recv_time. The last is a mistake in what the Retimer was given, and is logged as
+    an error, once.
 
-    A Sample goes out as it came, event_time as it was and event_time_std None, when
-    it can't be converted: the clock has no estimate yet (or none for the moment), or
-    the converted time lies more than `max_shift` seconds from the Sample's
-    recv_time, which a measurement cannot -- the estimate does not fit this Sample.
-    A Sample without a tick or a recv_time can't be converted either; that is
-    a mistake in what the Retimer was given, and is logged as an error, once.
-
-    `clock` should be filled from raw Containers, not from `source` or anything
-    made by a Retimer.
+    `clock` must be filled from raw Containers, not from `source` or anything a
+    Retimer made.
     """
     def __init__(self, source, clock, max_shift=0.5, max_age=10.0, max_count=None, log=None):
         super(Retimer, self).__init__(max_age, max_count, log)
@@ -370,6 +365,8 @@ class Retimer(Estimator):
         clock = self._clock_sample
         if clock is None or clock.n == 0:
             return sample
+        # the ClockSample's uncertainty at its own tick, and the rate's uncertainty times the
+        # distance from there, taken together
         later = _tick_difference(sample.tick, clock.tick) / clock.freq      # seconds after the clock's tick
         event_time = clock.host_at_tick + later
         if self._max_shift < abs(event_time - sample.recv_time):
