@@ -40,6 +40,6 @@ class ResponseLagEstimatorDetailTest(unittest.TestCase):
 
     def test_it_logs_to_the_librarys_own_log_unless_given_one(self):
         sticks, gyros = StickContainer(), GyroContainer()
-        self.assertIs(ResponseLagEstimator(sticks, gyros, TickClock(gyros)).log, library_log)
+        self.assertIs(ResponseLagEstimator(sticks, gyros, TickClock(gyros))._log, library_log)
         mine = Logger('mine')
-        self.assertIs(ResponseLagEstimator(sticks, gyros, TickClock(gyros), log=mine).log, mine)
+        self.assertIs(ResponseLagEstimator(sticks, gyros, TickClock(gyros), log=mine)._log, mine)

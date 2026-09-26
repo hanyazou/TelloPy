@@ -60,6 +60,6 @@ class TickClockDetailTest(unittest.TestCase):
         self.assertAlmostEqual(heard[-1].host_at_tick, 1.2 + 10 / 30.0, delta=2e-3)
 
     def test_it_logs_to_the_librarys_own_log_unless_given_one(self):
-        self.assertIs(TickClock(Container()).log, library_log)
+        self.assertIs(TickClock(Container())._log, library_log)
         mine = Logger('mine')
-        self.assertIs(TickClock(Container(), log=mine).log, mine)
+        self.assertIs(TickClock(Container(), log=mine)._log, mine)

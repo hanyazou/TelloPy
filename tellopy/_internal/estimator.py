@@ -364,7 +364,7 @@ class Retimer(Estimator):
         if sample.tick is None or sample.recv_time is None:
             if not self._complained:
                 self._complained = True
-                self.log.error('Retimer of %s: %s has no tick or no recv_time, so it is passed on '
+                self._log.error('Retimer of %s: %s has no tick or no recv_time, so it is passed on '
                                'as it is (said once)' % (self._source_name, type(sample).__name__))
             return sample
         clock = self._clock_sample

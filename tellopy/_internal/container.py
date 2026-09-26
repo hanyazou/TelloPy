@@ -38,13 +38,13 @@ class Container(object):
     EVENTS = ()
 
     def __init__(self, drone=None, max_age=10.0, max_count=None, log=None):
-        self.drone = drone
+        self._drone = drone
         if log is None:
             log = drone.log if drone is not None else library_log
-        self.log = log
-        self.max_age = max_age
-        self.max_count = max_count
-        self.count = 0              # how many Samples have ever been added
+        self._log = log
+        self._max_age = max_age
+        self._max_count = max_count
+        self._count = 0             # how many Samples have ever been added
         self._lock = threading.RLock()
         self._samples = collections.deque()
         self._listeners = []
@@ -53,14 +53,19 @@ class Container(object):
                 drone.subscribe(event, self.__on_event)
 
     def __on_event(self, event, sender, data):
-        if sender is self.drone:
+        if sender is self._drone:
             self.add(data)
+
+    @property
+    def count(self):
+        """How many Samples have been added, including those since dropped."""
+        return self._count
 
     def close(self):
         """Stop taking Samples from the drone."""
-        if self.drone is not None:
+        if self._drone is not None:
             for event in self.EVENTS:
-                self.drone.unsubscribe(event, self.__on_event)
+                self._drone.unsubscribe(event, self.__on_event)
 
     def add(self, sample):
         if self.SAMPLE is not None and not isinstance(sample, self.SAMPLE):
@@ -68,12 +73,12 @@ class Container(object):
                 type(self).__name__, self.SAMPLE.__name__, type(sample).__name__))
         with self._lock:
             self._samples.append(sample)
-            self.count += 1
-            while self.max_count is not None and self.max_count < len(self._samples):
+            self._count += 1
+            while self._max_count is not None and self._max_count < len(self._samples):
                 self._samples.popleft()
             if sample.event_time is not None:
                 while (self._samples[0].event_time is not None and
-                       self.max_age < sample.event_time - self._samples[0].event_time):
+                       self._max_age < sample.event_time - self._samples[0].event_time):
                     self._samples.popleft()
             listeners = list(self._listeners)
         # outside the lock, so that a listener may look at this Container
