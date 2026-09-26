@@ -30,12 +30,12 @@ class TickClockTest(unittest.TestCase):
 
     def test_finds_the_time_of_a_tick_despite_the_jitter(self):
         clock, tick_at = self.run_clock()
-        self.assertGreaterEqual(clock.latest().n, 30)
+        self.assertGreater(clock.latest().n, 100)
         self.assertClockAt(clock, tick_at, 59.9, 0.006)
         self.assertClockAt(clock, tick_at, 30.0, 0.006)
         self.assertAlmostEqual(clock.latest().freq, FREQ, delta=FREQ * 5e-4)
         self.assertAlmostEqual(clock.latest().residual_std, 0.027, delta=0.004)
-        self.assertEqual((clock.rejected, clock.resets), (0, 0))
+        self.assertEqual((clock.latest().rejected, clock.latest().resets), (0, 0))
 
     def test_its_own_samples_carry_the_estimate(self):
         clock, tick_at = self.run_clock(seconds=10.0)
@@ -48,7 +48,7 @@ class TickClockTest(unittest.TestCase):
         clock, tick_at = self.run_clock(seconds=40.0, tick0=2 ** 32 - int(FREQ * 15))    # wraps at 15 s
         self.assertClockAt(clock, tick_at, 39.9, 0.006)
         self.assertClockAt(clock, tick_at, 10.0, 0.006)     # a tick from before the wrap
-        self.assertEqual((clock.rejected, clock.resets), (0, 0))
+        self.assertEqual((clock.latest().rejected, clock.latest().resets), (0, 0))
 
     def test_late_packets_are_left_out(self):
         late = set(range(700, 1500, 160))                   # five packets, 0.4 s late
@@ -62,7 +62,7 @@ class TickClockTest(unittest.TestCase):
             return sample
         clock, tick_at = self.run_clock(events=make_late)
         reference, _ = self.run_clock()
-        self.assertEqual(clock.rejected, len(late))
+        self.assertEqual(clock.latest().rejected, len(late))
         self.assertAlmostEqual(host_time(clock, tick_at(59.9)), host_time(reference, tick_at(59.9)), delta=0.002)
 
     def test_starts_over_when_the_clock_jumps(self):
@@ -72,7 +72,7 @@ class TickClockTest(unittest.TestCase):
                 sample.event_time += 5.0
             return sample
         clock, tick_at = self.run_clock(seconds=40.0, events=jump)
-        self.assertEqual(clock.resets, 1)
+        self.assertEqual(clock.latest().resets, 1)
         self.assertAlmostEqual(host_time(clock, tick_at(39.9)), 39.9 + DELAY + 5.0, delta=0.008)
 
     def test_stale_records_at_the_start_do_not_spoil_the_clock(self):
@@ -82,6 +82,8 @@ class TickClockTest(unittest.TestCase):
         rng = random.Random(1)
         source = Container()
         clock = TickClock(source)
+        heard = []
+        clock.subscribe(heard.append)
         for k in range(3):
             source.add(Sample(event_time=100.0, tick=8039088 + k * 234119, recv_time=100.0))
         tick_at = lambda t: int(122000000 + FREQ * t)
@@ -89,29 +91,37 @@ class TickClockTest(unittest.TestCase):
             t = k / 30.0
             recv = 100.2 + t + DELAY + rng.gauss(0, 0.027)
             source.add(Sample(event_time=recv, tick=tick_at(t), recv_time=recv))
-        self.assertGreaterEqual(clock.latest().n, 30)
+        self.assertGreater(clock.latest().n, 100)
         self.assertAlmostEqual(clock.latest().freq, FREQ, delta=FREQ * 2e-3)
         self.assertAlmostEqual(host_time(clock, tick_at(14.9)), 100.2 + 14.9 + DELAY, delta=0.012)
-        self.assertEqual(clock.resets, 0)
+        self.assertEqual(clock.latest().resets, 0)
+        # and no estimate on the way there, from the first one, is far off
+        estimates = [s for s in heard if s.n]
+        self.assertGreater(len(estimates), 400)
+        for s in estimates:
+            truth = 100.2 + (s.tick - 122000000) / FREQ + DELAY
+            self.assertAlmostEqual(s.host_at_tick, truth, delta=0.1)
 
     def test_it_says_what_it_knows_for_every_packet(self):
         source = Container()
-        clock = TickClock(source, provisional_samples=5, min_samples=30)
+        nominal = FREQ + 10.0                           # what the clock is told the counter's rate is, near enough
+        clock = TickClock(source, nominal_freq=nominal)
         heard = []
         clock.subscribe(heard.append)
         tick_at = lambda k: int(1000000 + FREQ * k / 30.0)
-        for k in range(40):
+        for k in range(60):
             source.add(Sample(event_time=k / 30.0, tick=tick_at(k), recv_time=k / 30.0))
-        self.assertEqual(len(heard), 39)                # the newest packet is held until the next arrives
-        self.assertEqual([s.n for s in heard[:4]], [0, 0, 0, 0])
-        self.assertEqual(heard[0].host_at_tick, None)
-        self.assertEqual(heard[0].freq_std, None)
-        self.assertEqual([s.n for s in heard[4:8]], [5, 6, 7, 8])                # the rough estimate
-        self.assertEqual(heard[4].freq, clock.nominal_freq)
-        self.assertAlmostEqual(heard[4].host_at_tick, 4 / 30.0, delta=1e-3)
-        self.assertEqual([s.n for s in heard[-3:]], [37, 38, 39])              # fitted from the 30th
-        self.assertAlmostEqual(heard[-1].freq, FREQ, delta=1.0)
+        self.assertEqual(len(heard), 59)                # the newest packet is held until the next arrives
         self.assertTrue(all(s.tick == tick_at(k) for k, s in enumerate(heard)))
+        # it starts with no estimate, and then counts the packets its estimate rests on
+        first = next(i for i, s in enumerate(heard) if s.n)
+        self.assertGreater(first, 0)
+        self.assertTrue(all(s.n == 0 and s.host_at_tick is None and s.freq_std is None for s in heard[:first]))
+        self.assertEqual([s.n for s in heard[first:]], list(range(heard[first].n, heard[first].n + len(heard) - first)))
+        # the first estimate takes the rate it was told, and the last has measured it
+        self.assertEqual(heard[first].freq, nominal)
+        self.assertAlmostEqual(heard[first].host_at_tick, first / 30.0, delta=0.01)
+        self.assertAlmostEqual(heard[-1].freq, FREQ, delta=FREQ * 1e-4)
 
     def test_a_late_packet_is_answered_with_the_same_estimate(self):
         source = Container()
@@ -167,7 +177,7 @@ class TickClockTest(unittest.TestCase):
                 sample.event_time += 5.0
             return sample
         source = Container()
-        clock = TickClock(source, min_samples=30)
+        clock = TickClock(source)
         clock.subscribe(heard.append)
         rng = random.Random(1)
         for k in range(1200):

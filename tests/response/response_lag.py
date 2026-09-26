@@ -70,6 +70,8 @@ PATTERNS = {
     'pitch': [('forward', 50, 0.6), ('backward', 50, 0.6)],
 }
 # the Tello method that sets each command
+CLOCK_GOOD_TO = 0.010        # seconds: the flight waits until the clock's estimate is good to this
+
 METHODS = {'cw': 'clockwise', 'ccw': 'counter_clockwise', 'right': 'right', 'left': 'left',
            'forward': 'forward', 'backward': 'backward'}
 
@@ -177,7 +179,7 @@ def main():
 
     def clock_ready():
         latest = clock.latest()
-        return latest is not None and clock.min_samples <= latest.n         # a line is fitted
+        return latest is not None and latest.n > 0 and latest.host_at_tick_std < CLOCK_GOOD_TO
 
     estimators = []
     for axis in axes:
@@ -207,7 +209,7 @@ def main():
         while not clock_ready() and time.monotonic() < end:
             time.sleep(0.2)
         if not clock_ready():
-            print('the clock has no estimate yet (is the drone sending log data?)')
+            print('the clock is not good enough yet (is the drone sending log data?)')
             return
         print('clock: %.0f Hz, packets scatter %.1f ms' % (clock.latest().freq, clock.latest().residual_std * 1e3))
         end = time.monotonic() + 10.0
@@ -249,7 +251,8 @@ def main():
                     print('  %-8s median %.0f ms, scatter %.0f ms   (mean %.0f, std %.0f; last %d)' % (
                         which, summary.median * 1e3, summary.sigma * 1e3, summary.mean * 1e3, summary.std * 1e3, summary.n))
         print('clock: %.1f ms scatter, %d packets left out, started over %d times' % (
-            clock.latest().residual_std * 1e3 if clock_ready() else float('nan'), clock.rejected, clock.resets))
+            clock.latest().residual_std * 1e3 if clock_ready() else float('nan'),
+            clock.latest().rejected if clock.latest() else 0, clock.latest().resets if clock.latest() else 0))
         if battery['lowest'] is not None:
             print('\nbattery: lowest reading %d%%' % battery['lowest'])
         print('\nrecorded as %s' % stamp)

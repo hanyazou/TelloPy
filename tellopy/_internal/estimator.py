@@ -122,27 +122,27 @@ class TickClock(Estimator):
     and its rate is measured too.
     """
     SAMPLE = ClockSample
+    _RECENTER_TICKS = 2e8       # how far the origin may lag behind the newest tick, for the numbers' sake
 
     def __init__(self, *inputs, window=60.0, min_samples=30, reject_sigmas=5.0,
-                 reject_floor=0.005, max_consecutive_rejects=20, recenter_ticks=2e8,
+                 reject_floor=0.005, max_consecutive_rejects=20,
                  nominal_freq=2344062.0, warmup_tolerance=0.5, log=None,
                  provisional_samples=5, nominal_freq_error=3e-4):
         super(TickClock, self).__init__(max_age=10.0, log=log)
-        self.nominal_freq = nominal_freq
-        self.nominal_freq_error = nominal_freq_error
-        self.warmup_tolerance = warmup_tolerance
-        self.provisional_samples = provisional_samples
+        self._nominal_freq = nominal_freq
+        self._nominal_freq_error = nominal_freq_error
+        self._warmup_tolerance = warmup_tolerance
+        self._provisional_samples = provisional_samples
         self._candidates = []       # (unwrapped tick, recv_time) while starting up
         self._provisional = None    # (offset, n, sigma, centre, newest) of the rough estimate, once there is one
         self._started = False
-        self.window = window
-        self.min_samples = min_samples
-        self.reject_sigmas = reject_sigmas
-        self.reject_floor = reject_floor
-        self.max_consecutive_rejects = max_consecutive_rejects
-        self.recenter_ticks = recenter_ticks
-        self.rejected = 0           # left out of the fit as outliers, in total
-        self.resets = 0             # times the window was thrown away
+        self._window = window
+        self._min_samples = min_samples
+        self._reject_sigmas = reject_sigmas
+        self._reject_floor = reject_floor
+        self._max_consecutive_rejects = max_consecutive_rejects
+        self._rejected = 0          # left out of the fit as outliers, in total
+        self._resets = 0            # times the window was thrown away
         self._consecutive_rejects = 0
         self._last_tick = None      # the newest tick, and where it stands unwrapped
         self._last_unwrapped = None
@@ -178,28 +178,28 @@ class TickClock(Estimator):
             return self._clock_sample(unwrapped, recv_time, tick)
         x, y = unwrapped - self._x0, recv_time - self._y0
         fit = self._fit()
-        if fit is not None and self.min_samples <= len(self._points) and not self._just_started:
+        if fit is not None and self._min_samples <= len(self._points) and not self._just_started:
             slope, intercept, std = fit
-            if abs(y - (intercept + slope * x)) > self.reject_sigmas * max(std, self.reject_floor):
-                self.rejected += 1
+            if abs(y - (intercept + slope * x)) > self._reject_sigmas * max(std, self._reject_floor):
+                self._rejected += 1
                 self._consecutive_rejects += 1
-                if self._consecutive_rejects >= self.max_consecutive_rejects:
+                if self._consecutive_rejects >= self._max_consecutive_rejects:
                     self._reset(unwrapped, recv_time)
                 return self._clock_sample(unwrapped, recv_time, tick)
         if not self._just_started:
             self._push(x, y)
         self._just_started = False
         self._consecutive_rejects = 0
-        while self.window < y - self._points[0][1]:
+        while self._window < y - self._points[0][1]:
             self._pop()
-        if self.recenter_ticks < x:
+        if self._RECENTER_TICKS < x:
             self._recenter(x, y)
         return self._clock_sample(unwrapped, recv_time, tick)
 
     def _clock_sample(self, unwrapped, recv_time, tick):
         """What the clock knows now, at the newest packet it rests on; if it knows nothing, at this one."""
-        totals = dict(rejected=self.rejected, resets=self.resets)
-        fit = self._fit() if self._started and self.min_samples <= len(self._points) else None
+        totals = dict(rejected=self._rejected, resets=self._resets)
+        fit = self._fit() if self._started and self._min_samples <= len(self._points) else None
         if fit is not None:
             slope, intercept, std = fit
             n = len(self._points)
@@ -213,11 +213,11 @@ class TickClock(Estimator):
                                freq_std=freq * freq * std / math.sqrt(spread), residual_std=std, **totals)
         if self._provisional is not None:
             offset, n, sigma, centre, (newest, newest_recv_time) = self._provisional
-            drift = abs(newest - centre) / self.nominal_freq * self.nominal_freq_error
+            drift = abs(newest - centre) / self._nominal_freq * self._nominal_freq_error
             return ClockSample(int(newest) & 0xffffffff, newest_recv_time, n=n,
-                               host_at_tick=offset + newest / self.nominal_freq,
-                               freq=self.nominal_freq, host_at_tick_std=math.sqrt(sigma * sigma / n + drift * drift),
-                               freq_std=self.nominal_freq * self.nominal_freq_error, residual_std=sigma, **totals)
+                               host_at_tick=offset + newest / self._nominal_freq,
+                               freq=self._nominal_freq, host_at_tick_std=math.sqrt(sigma * sigma / n + drift * drift),
+                               freq_std=self._nominal_freq * self._nominal_freq_error, residual_std=sigma, **totals)
         return ClockSample(tick, recv_time, **totals)
 
     # -- the fit -----------------------------------------------------------
@@ -242,7 +242,7 @@ class TickClock(Estimator):
             self._sums[i] -= term
 
     def _reset(self, unwrapped, recv_time):
-        self.resets += 1
+        self._resets += 1
         self._points.clear()
         self._sums = [0.0] * 5
         self._started = False
@@ -256,18 +256,18 @@ class TickClock(Estimator):
         Before that, keeps the rough estimate up to date once a few of them agree.
         """
         self._candidates.append((unwrapped, recv_time))
-        if len(self._candidates) < self.provisional_samples:
+        if len(self._candidates) < self._provisional_samples:
             return False
         # each candidate implies when the counter read zero, if it ran at its nominal rate;
         # the real ones agree on that, a stale one is off by however stale it is
-        implied = [y - x / self.nominal_freq for x, y in self._candidates]
+        implied = [y - x / self._nominal_freq for x, y in self._candidates]
         middle = statistics.median(implied)
-        agreeing = [(c, i) for c, i in zip(self._candidates, implied) if abs(i - middle) <= self.warmup_tolerance]
-        if len(agreeing) < self.provisional_samples:
+        agreeing = [(c, i) for c, i in zip(self._candidates, implied) if abs(i - middle) <= self._warmup_tolerance]
+        if len(agreeing) < self._provisional_samples:
             self._provisional = None
-            del self._candidates[:-4 * self.min_samples]    # keep looking, but not for ever
+            del self._candidates[:-4 * self._min_samples]    # keep looking, but not for ever
             return False
-        if len(agreeing) < self.min_samples:
+        if len(agreeing) < self._min_samples:
             self._provisional = self._rough_estimate(agreeing)
             return False
         self._provisional = None
@@ -286,14 +286,14 @@ class TickClock(Estimator):
         for _ in range(2):      # twice: leave out those far from the rest, and take the scatter again
             offsets = [i for _, i in agreeing]
             mean = statistics.mean(offsets)
-            sigma = max(statistics.stdev(offsets), self.reject_floor)
+            sigma = max(statistics.stdev(offsets), self._reject_floor)
             near = [(c, i) for c, i in agreeing if abs(i - mean) <= 4 * sigma]
-            if len(near) < self.provisional_samples:
+            if len(near) < self._provisional_samples:
                 break
             agreeing = near
         offsets = [i for _, i in agreeing]
         return (statistics.mean(offsets), len(agreeing),
-                max(statistics.stdev(offsets), self.reject_floor),
+                max(statistics.stdev(offsets), self._reject_floor),
                 statistics.mean(c[0] for c, _ in agreeing), agreeing[-1][0])
 
     def _recenter(self, dx, dy):
