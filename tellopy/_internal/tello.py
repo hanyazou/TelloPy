@@ -88,16 +88,16 @@ class Tello(object):
     LOG_DEBUG = logger.LOG_DEBUG
     LOG_ALL = logger.LOG_ALL
 
-    # How long an outgoing command may wait for its matching response
-    # before we give up on it and evict it from __pending_sends.
-    COMMAND_ACK_TIMEOUT_SEC = 1.5
-
-    def __init__(self, port=9000, video_port=6038):
+    def __init__(self, port=9000, video_port=6038, command_ack_timeout=1.5):
+        # command_ack_timeout is how long an outgoing command may wait for its
+        # matching response, in seconds, before we give up on it and evict it
+        # from __pending_sends.
         self.tello_addr = ('192.168.10.1', 8889)
         self.debug = False
         self.pkt_seq_num = 0x01e4
         self.port = port
-        self.video_port = video_port
+        self.__video_port = video_port
+        self.__command_ack_timeout = command_ack_timeout
         self.udpsize = 2000
         self.left_x = 0.0
         self.left_y = 0.0
@@ -106,7 +106,7 @@ class Tello(object):
         self.sock = None
         self.state = self.STATE_DISCONNECTED
         self.lock = threading.Lock()
-        self.seq_num_lock = threading.Lock()
+        self.__seq_num_lock = threading.Lock()
         self.__pending_sends_lock = threading.Lock()
         self.__pending_sends = OrderedDict()
         self.connected = threading.Event()
@@ -133,7 +133,7 @@ class Tello(object):
         self.file_recv = {}  # Map filenum -> protocol.DownloadedFile
 
         # IMU calibration polling state; see start_calibration().
-        self.calibration_active = False
+        self.__calibration_active = False
 
         # Create a UDP socket
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -273,7 +273,7 @@ class Tello(object):
         to follow progress. Polling stops automatically once the drone
         reports completion (see protocol.CalibrationStatus.done).
         """
-        self.calibration_active = True
+        self.__calibration_active = True
         return self.__send_command(CALIBRATION_START_CMD, 'start_calibration', pkt_type=0x48, track=False)
 
     def stop_calibration(self):
@@ -283,7 +283,12 @@ class Tello(object):
         drone to cancel/abort an in-progress calibration (no such command
         is known).
         """
-        self.calibration_active = False
+        self.__calibration_active = False
+
+    @property
+    def calibration_active(self):
+        """True from start_calibration() until the drone reports the calibration done or stop_calibration()."""
+        return self.__calibration_active
 
     def __send_calibration_poll(self):
         self.__send_command(CALIBRATION_STATUS_CMD, 'calibration_poll', pkt_type=0x48, quiet=True, track=False)
@@ -541,7 +546,7 @@ class Tello(object):
         that case lets ack-matching treat seq_num==0 as untracked, instead
         of it colliding with a real value from this counter's wraparound.
         """
-        with self.seq_num_lock:
+        with self.__seq_num_lock:
             self.pkt_seq_num = (self.pkt_seq_num + 1) & 0xffff
             if self.pkt_seq_num == 0:
                 self.pkt_seq_num = 1
@@ -579,7 +584,8 @@ class Tello(object):
             return False
 
     def __evict_stale_pending_sends(self, now):
-        """Drop and report any pending sends older than COMMAND_ACK_TIMEOUT_SEC.
+        """Drop and report any pending sends older than the command_ack_timeout.
+
 
         Called from __match_command_response(), which runs on every
         received packet regardless of cmd, so eviction happens on a
@@ -591,7 +597,7 @@ class Tello(object):
         with self.__pending_sends_lock:
             while self.__pending_sends:
                 _, oldest = next(iter(self.__pending_sends.items()))
-                if now - oldest.send_time <= self.COMMAND_ACK_TIMEOUT_SEC:
+                if now - oldest.send_time <= self.__command_ack_timeout:
                     break
                 self.__pending_sends.popitem(last=False)
                 evicted.append(oldest)
@@ -624,7 +630,7 @@ class Tello(object):
             sample = self.__pending_sends.pop((cmd, seq_num), None)
         if sample is None:
             return
-        sample.mark_acked(recv_time, ack_payload)
+        sample._mark_acked(recv_time, ack_payload)
         self.__publish(event=self.EVENT_SAMPLE_COMMAND_ACK, data=sample, recv_time=recv_time)
 
     def __publish_log_records(self, recv_time):
@@ -738,7 +744,7 @@ class Tello(object):
             log.debug("recv: calibration status: %s" % str(status))
             self.__publish(event=self.EVENT_CALIBRATION_STATUS, data=status, recv_time=recv_time)
             if status.done:
-                self.calibration_active = False
+                self.__calibration_active = False
         elif cmd == CALIBRATION_START_CMD:
             log.debug("recv: calibration start ack: %s" % byte_to_hexstring(data[9:-2]))
         elif cmd in (SET_ALT_LIMIT_CMD, ATT_LIMIT_CMD, LOW_BAT_THRESHOLD_CMD, TAKEOFF_CMD, LAND_CMD, VIDEO_START_CMD, VIDEO_ENCODER_RATE_CMD, PALM_LAND_CMD,
@@ -868,7 +874,7 @@ class Tello(object):
 
             if self.state == self.STATE_CONNECTED:
                 self.__send_stick_command()  # ignore errors
-                if self.calibration_active:
+                if self.__calibration_active:
                     self.__send_calibration_poll()  # ignore errors
 
             try:
@@ -890,7 +896,7 @@ class Tello(object):
         log.info('start video thread')
         # Create a UDP socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.bind(('', self.video_port))
+        sock.bind(('', self.__video_port))
         sock.settimeout(1.0)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 512 * 1024)
         log.info('video receive buffer size = %d' %

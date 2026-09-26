@@ -43,14 +43,13 @@ class CommandTest(DroneTestCase):
         self.assertEqual(sample.event_time, sample.send_time)
 
     def test_unanswered_command_is_reported_as_timed_out(self):
-        drone = self.start_drone()
+        drone = self.start_drone(command_ack_timeout=0.5)
         timeouts, acks = [], []
         drone.subscribe(drone.EVENT_SAMPLE_COMMAND_TIMEOUT, lambda event, sender, data: timeouts.append(data))
         drone.subscribe(drone.EVENT_SAMPLE_COMMAND_ACK, lambda event, sender, data: acks.append(data))
         self.connect()
         self.fake.wait_for_cmd(wire.TIME_CMD)
         self.fake.ack_enabled = False
-        drone.COMMAND_ACK_TIMEOUT_SEC = 0.2
         drone.land()
 
         def timeouts_of_land():
@@ -158,8 +157,13 @@ class CalibrationTest(DroneTestCase):
         drone = self.connect()
         got = []
         drone.subscribe(drone.EVENT_CALIBRATION_STATUS, lambda event, sender, data: got.append(data))
+        self.assertFalse(drone.calibration_active)
         drone.start_calibration()
+        self.assertTrue(drone.calibration_active)
+        with self.assertRaises(AttributeError):
+            drone.calibration_active = False               # it says what the drone is doing; it is not a switch
         self.fake.send_calibration_status(step_mask=0x3f, progress=100)
         wait_until(lambda: got, what='a calibration status')
         status = got[0]
         self.assertEqual((status.steps_done, status.done), (6, True))
+        wait_until(lambda: not drone.calibration_active, what='the calibration to end')

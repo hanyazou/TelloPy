@@ -92,7 +92,7 @@ class EventContractTest(DroneTestCase):
 
     def test_every_handler_style_gets_every_event(self):
         events = public_events()
-        drone = self.start_drone()
+        drone = self.start_drone(command_ack_timeout=0.5)
         handlers = Handlers()
         for name in EXERCISED:
             for handler in (handlers.narrow, handlers.wide, handlers.catch_all):
@@ -125,7 +125,6 @@ class EventContractTest(DroneTestCase):
         # A command nobody answers is reported as timed out, but only when
         # more packets arrive to drive the check, as they do from a real drone.
         self.fake.ack_enabled = False
-        drone.COMMAND_ACK_TIMEOUT_SEC = 0.2
         drone.land()
 
         def keep_the_check_running():

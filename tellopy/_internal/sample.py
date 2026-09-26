@@ -41,7 +41,7 @@ class CommandSample(Sample):
         self.payload = payload
         self.ack_payload = None
 
-    def mark_acked(self, recv_time, ack_payload):
+    def _mark_acked(self, recv_time, ack_payload):
         self.recv_time = recv_time
         self.ack_payload = ack_payload
 
