@@ -4,8 +4,8 @@ import time
 
 from tellopy._internal import protocol
 
-from .fake_drone import log_record
-from .harness import DroneTestCase, wait_until
+from tests.support.fake_drone import log_record
+from tests.support.harness import DroneTestCase, wait_until
 
 
 class ConnectionTest(DroneTestCase):

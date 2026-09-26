@@ -17,8 +17,8 @@ import tellopy
 from tellopy._internal import dispatcher, logger, protocol
 from tellopy._internal import tello as tello_module
 
-from tests.offline.fake_drone import FakeDrone, log_record
-from tests.offline.harness import free_udp_port
+from tests.support.fake_drone import FakeDrone, log_record
+from tests.support.harness import free_udp_port
 from tests.response import response_lag
 
 

@@ -9,8 +9,8 @@ from tellopy import Tello
 from tellopy._internal import protocol
 from tellopy._internal.sample import StickSample
 
-from .fake_drone import log_record
-from .harness import DroneTestCase, wait_until
+from tests.support.fake_drone import log_record
+from tests.support.harness import DroneTestCase, wait_until
 
 
 # Events the scenario below makes happen, and the kind of data each carries

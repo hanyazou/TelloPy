@@ -5,8 +5,8 @@ from tellopy._internal.logger import Logger
 from tellopy._internal.sample import Sample
 from tellopy._internal.tello import log as library_log
 
-from .fake_drone import log_record
-from .harness import DroneTestCase, wait_until
+from tests.support.fake_drone import log_record
+from tests.support.harness import DroneTestCase, wait_until
 
 
 def sample(t):
@@ -105,8 +105,8 @@ class ContainerOnADroneTest(DroneTestCase):
         self.connect()
         # a second drone's records must not end up in the first one's container
         from tellopy import Tello
-        from .harness import free_udp_port
-        from .fake_drone import FakeDrone
+        from tests.support.harness import free_udp_port
+        from tests.support.fake_drone import FakeDrone
         other_video = free_udp_port()
         other_fake = FakeDrone(other_video)
         other = Tello(port=free_udp_port(), video_port=other_video)

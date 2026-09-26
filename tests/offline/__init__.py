@@ -1,6 +1,6 @@
 """Tests that need neither a drone nor Wi-Fi.
 
-A FakeDrone (fake_drone.py) stands in for the drone on loopback UDP, and
+A FakeDrone (tests/support/fake_drone.py) stands in for the drone on loopback UDP, and
 the real Tello -- real sockets, real threads -- talks to it. Run them with
 
     ./tests/offline/test.sh
