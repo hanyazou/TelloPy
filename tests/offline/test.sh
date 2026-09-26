@@ -5,7 +5,7 @@
 #
 #   ./tests/offline/test.sh                       run them all
 #   ./tests/offline/test.sh -v                    ... listing each test as it runs
-#   ./tests/offline/test.sh tests.offline.test_connection.VideoTest
+#   ./tests/offline/test.sh tests.offline.contract.test_connection.VideoTest
 #                                                 run just the named test(s)
 #
 # Set PYTHON to use a particular interpreter (default: python3).
