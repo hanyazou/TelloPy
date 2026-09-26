@@ -4,7 +4,7 @@ import random
 import unittest
 
 from tellopy._internal.container import Container, GyroContainer, ImuContainer, StickContainer
-from tellopy._internal.estimator import LagSample, ResponseLagEstimator, TickClock
+from tellopy._internal.estimator import ClockSample, LagSample, ResponseLagEstimator, TickClock
 from tellopy._internal.logger import Logger
 from tellopy._internal.protocol import LogGyro, LogImuAtti
 from tellopy._internal.sample import Sample, StickSample
@@ -18,6 +18,13 @@ def tick_sample(t, tick_at, delay, jitter):
     """A Sample as if measured at true time t and received a little later."""
     recv = t + delay + jitter
     return Sample(event_time=recv, tick=tick_at(t), recv_time=recv)
+
+
+def host_time(clock, tick):
+    """The host time of tick, by the newest ClockSample of the clock."""
+    latest = clock.latest()
+    delta = (tick - latest.tick + 2 ** 31) % 2 ** 32 - 2 ** 31         # the counter is 32 bits and wraps
+    return latest.host_at_tick + delta / latest.freq
 
 
 class TickClockTest(unittest.TestCase):
@@ -38,27 +45,15 @@ class TickClockTest(unittest.TestCase):
         return clock, tick_at
 
     def assertClockAt(self, clock, tick_at, t, tolerance):
-        self.assertAlmostEqual(clock.host_time(tick_at(t)), t + DELAY, delta=tolerance)
-
-    def test_not_ready_until_it_has_enough_samples(self):
-        source = Container()
-        clock = TickClock(source, min_samples=30)
-        self.assertFalse(clock.ready)
-        with self.assertRaises(LookupError):
-            clock.host_time(1000)
-        for k in range(30):
-            source.add(Sample(event_time=k * 0.1, tick=k * 234405, recv_time=k * 0.1))
-        self.assertFalse(clock.ready)           # the newest packet is held until the next arrives
-        source.add(Sample(event_time=3.0, tick=30 * 234405, recv_time=3.0))
-        self.assertTrue(clock.ready)
+        self.assertAlmostEqual(host_time(clock, tick_at(t)), t + DELAY, delta=tolerance)
 
     def test_finds_the_time_of_a_tick_despite_the_jitter(self):
         clock, tick_at = self.run_clock()
-        self.assertTrue(clock.ready)
+        self.assertGreaterEqual(clock.latest().n, 30)
         self.assertClockAt(clock, tick_at, 59.9, 0.006)
         self.assertClockAt(clock, tick_at, 30.0, 0.006)
-        self.assertAlmostEqual(clock.freq, FREQ, delta=FREQ * 5e-4)
-        self.assertAlmostEqual(clock.residual_std, 0.027, delta=0.004)
+        self.assertAlmostEqual(clock.latest().freq, FREQ, delta=FREQ * 5e-4)
+        self.assertAlmostEqual(clock.latest().residual_std, 0.027, delta=0.004)
         self.assertEqual((clock.rejected, clock.resets), (0, 0))
 
     def test_its_own_samples_carry_the_estimate(self):
@@ -66,7 +61,6 @@ class TickClockTest(unittest.TestCase):
         latest = clock.latest()
         self.assertEqual((latest.rejected, latest.resets), (0, 0))
         self.assertEqual(latest.n, len(clock._points))
-        self.assertAlmostEqual(latest.freq, clock.freq)
         self.assertIsNone(clock.close())
 
     def test_the_32_bit_counter_wrapping_is_no_problem(self):
@@ -88,7 +82,7 @@ class TickClockTest(unittest.TestCase):
         clock, tick_at = self.run_clock(events=make_late)
         reference, _ = self.run_clock()
         self.assertEqual(clock.rejected, len(late))
-        self.assertAlmostEqual(clock.host_time(tick_at(59.9)), reference.host_time(tick_at(59.9)), delta=0.002)
+        self.assertAlmostEqual(host_time(clock, tick_at(59.9)), host_time(reference, tick_at(59.9)), delta=0.002)
 
     def test_starts_over_when_the_clock_jumps(self):
         def jump(t, sample):
@@ -98,7 +92,7 @@ class TickClockTest(unittest.TestCase):
             return sample
         clock, tick_at = self.run_clock(seconds=40.0, events=jump)
         self.assertEqual(clock.resets, 1)
-        self.assertAlmostEqual(clock.host_time(tick_at(39.9)), 39.9 + DELAY + 5.0, delta=0.008)
+        self.assertAlmostEqual(host_time(clock, tick_at(39.9)), 39.9 + DELAY + 5.0, delta=0.008)
 
     def test_running_sums_agree_with_fitting_the_window_afresh(self):
         # a tiny recenter_ticks makes it move its origin all the time
@@ -119,7 +113,7 @@ class TickClockTest(unittest.TestCase):
                 mx, my = sum(x for x, _ in fitted) / n, sum(y for _, y in fitted) / n
                 slope = sum((x - mx) * (y - my) for x, y in fitted) / sum((x - mx) ** 2 for x, _ in fitted)
                 expected = my + slope * (sample.tick - mx)
-                self.assertAlmostEqual(clock.host_time(sample.tick), expected, delta=1e-6)
+                self.assertAlmostEqual(host_time(clock, sample.tick), expected, delta=1e-6)
 
     def test_stale_records_at_the_start_do_not_spoil_the_clock(self):
         # what a real drone sends on connecting: three old records from just after it booted
@@ -135,9 +129,9 @@ class TickClockTest(unittest.TestCase):
             t = k / 30.0
             recv = 100.2 + t + DELAY + rng.gauss(0, 0.027)
             source.add(Sample(event_time=recv, tick=tick_at(t), recv_time=recv))
-        self.assertTrue(clock.ready)
-        self.assertAlmostEqual(clock.freq, FREQ, delta=FREQ * 2e-3)
-        self.assertAlmostEqual(clock.host_time(tick_at(14.9)), 100.2 + 14.9 + DELAY, delta=0.012)
+        self.assertGreaterEqual(clock.latest().n, 30)
+        self.assertAlmostEqual(clock.latest().freq, FREQ, delta=FREQ * 2e-3)
+        self.assertAlmostEqual(host_time(clock, tick_at(14.9)), 100.2 + 14.9 + DELAY, delta=0.012)
         self.assertEqual(clock.resets, 0)
 
     def test_it_starts_as_soon_as_enough_real_records_have_come(self):
@@ -147,11 +141,11 @@ class TickClockTest(unittest.TestCase):
             source.add(Sample(event_time=1.0, tick=8039088 + k * 234119, recv_time=1.0))
         for k in range(29):
             source.add(Sample(event_time=1.2 + k / 30.0, tick=int(122000000 + FREQ * k / 30.0), recv_time=1.2 + k / 30.0))
-        self.assertFalse(clock.ready)           # 29 good ones are not yet enough
+        self.assertLess(clock.latest().n, 30)   # 29 good ones are not yet enough for a line
         source.add(Sample(event_time=2.2, tick=int(122000000 + FREQ * 29 / 30.0), recv_time=1.2 + 29 / 30.0))
-        self.assertFalse(clock.ready)           # 30, but the newest packet is held until the next arrives
+        self.assertLess(clock.latest().n, 30)   # 30, but the newest packet is held until the next arrives
         source.add(Sample(event_time=2.3, tick=int(122000000 + FREQ * 30 / 30.0), recv_time=1.2 + 30 / 30.0))
-        self.assertTrue(clock.ready)
+        self.assertGreaterEqual(clock.latest().n, 30)
 
     def test_it_says_what_it_knows_for_every_packet(self):
         source = Container()
@@ -170,7 +164,6 @@ class TickClockTest(unittest.TestCase):
         self.assertAlmostEqual(heard[4].host_at_tick, 4 / 30.0, delta=1e-3)
         self.assertEqual([s.n for s in heard[-3:]], [37, 38, 39])              # fitted from the 30th
         self.assertAlmostEqual(heard[-1].freq, FREQ, delta=1.0)
-        self.assertTrue(clock.ready)
         self.assertTrue(all(s.tick == tick_at(k) for k, s in enumerate(heard)))
 
     def test_the_rough_estimate_sets_aside_stale_records(self):
@@ -260,8 +253,8 @@ class TickClockTest(unittest.TestCase):
                 with_all.add(sample)
                 if age == 0.0:
                     freshest.add(sample)
-        self.assertAlmostEqual(clock_all.host_time(5000000), clock_freshest.host_time(5000000), delta=1e-9)
-        self.assertEqual(clock_all.residual_std, clock_freshest.residual_std)
+        self.assertAlmostEqual(host_time(clock_all, 5000000), host_time(clock_freshest, 5000000), delta=1e-9)
+        self.assertEqual(clock_all.latest().residual_std, clock_freshest.latest().residual_std)
 
     def test_it_logs_to_the_librarys_own_log_unless_given_one(self):
         self.assertIs(TickClock(Container()).log, library_log)
@@ -365,6 +358,58 @@ class ResponseLagEstimatorTest(unittest.TestCase):
         for lag in estimator:
             self.assertAlmostEqual(lag.onset, onset, delta=0.010)
             self.assertAlmostEqual(lag.midpoint, midpoint, delta=0.010)
+
+    def arrive(self, flight, sticks, gyros, clock=None, at=None):
+        """Feed a flight; at(k) may give a ClockSample to publish on `clock` before the k-th arrival."""
+        for k, sample in enumerate(flight.arrivals()):
+            if clock is not None and at is not None and at(k) is not None:
+                clock.add(at(k))
+            (sticks if isinstance(sample, StickSample) else gyros).add(sample)
+
+    def exact_clock_sample(self, std, n=100):
+        """What a clock that knows the Flight's tick <-> host time exactly would say."""
+        return ClockSample(3000000, 0.0, n=n, host_at_tick=DELAY, freq=FREQ, host_at_tick_std=std, freq_std=0.0)
+
+    def test_the_lags_say_how_far_the_clock_can_be_trusted(self):
+        estimator = self.estimate(Flight(self.PULSES, gyro_rate=200.0))
+        self.assertEqual(len(estimator), len(self.PULSES))
+        self.assertTrue(all(0.0 < lag.clock_std < 0.01 for lag in estimator), [lag.clock_std for lag in estimator])
+
+    def test_a_reading_is_put_on_the_clock_by_the_newest_estimate(self):
+        flight = Flight(self.PULSES, gyro_rate=200.0)
+        sticks, gyros, clock = StickContainer(), GyroContainer(), Container()
+        estimator = ResponseLagEstimator(sticks, gyros, clock)
+        clock.add(self.exact_clock_sample(0.004))
+        self.arrive(flight, sticks, gyros)
+        onset, midpoint = flight.expected()
+        self.assertEqual(len(estimator), len(self.PULSES))
+        self.assertAlmostEqual(estimator.summary('onset').median, onset, delta=0.003)
+        self.assertAlmostEqual(estimator.summary('midpoint').median, midpoint, delta=0.003)
+        self.assertTrue(all(abs(lag.clock_std - 0.004) < 1e-9 for lag in estimator))
+
+    def test_the_worst_clock_std_of_the_readings_counts(self):
+        flight = Flight(self.PULSES, gyro_rate=200.0)
+        sticks, gyros, clock = StickContainer(), GyroContainer(), Container()
+        estimator = ResponseLagEstimator(sticks, gyros, clock)
+        clock.add(self.exact_clock_sample(0.004))
+        halfway = len(flight.arrivals()) // 2
+        self.arrive(flight, sticks, gyros, clock, at=lambda k: self.exact_clock_sample(0.020) if k == halfway else None)
+        stds = [lag.clock_std for lag in estimator]
+        self.assertEqual(stds, sorted(stds))
+        self.assertAlmostEqual(stds[0], 0.004)
+        self.assertAlmostEqual(stds[-1], 0.020)
+
+    def test_without_an_estimate_the_arrival_times_are_used_and_the_lags_say_so(self):
+        flight = Flight(self.PULSES, gyro_rate=200.0)
+        for clock_says in (None, ClockSample(3000000, 0.0)):          # nothing yet, and no estimate
+            sticks, gyros, clock = StickContainer(), GyroContainer(), Container()
+            estimator = ResponseLagEstimator(sticks, gyros, clock)
+            if clock_says is not None:
+                clock.add(clock_says)
+            self.arrive(flight, sticks, gyros)
+            self.assertGreaterEqual(len(estimator), len(self.PULSES) - 2)
+            self.assertTrue(all(lag.clock_std is None for lag in estimator))
+            self.assertAlmostEqual(estimator.summary('midpoint').median, flight.expected()[1], delta=0.02)
 
     def test_at_the_real_gyro_rate_the_early_crossing_reads_low(self):
         # With a reading every 50 ms, the straight line drawn between the two

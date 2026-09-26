@@ -175,6 +175,10 @@ def main():
                 files.write('clock', '%.6f %d - - - 0 %d %d\n' % (s.recv_time, s.tick, s.rejected, s.resets))
     clock.subscribe(record_clock)
 
+    def clock_ready():
+        latest = clock.latest()
+        return latest is not None and clock.min_samples <= latest.n         # a line is fitted
+
     estimators = []
     for axis in axes:
         if axis == 'yaw':
@@ -200,12 +204,12 @@ def main():
         drone.wait_for_connection(60.0)
         print('connected; waiting for the clock ...')
         end = time.monotonic() + 30.0
-        while not clock.ready and time.monotonic() < end:
+        while not clock_ready() and time.monotonic() < end:
             time.sleep(0.2)
-        if not clock.ready:
+        if not clock_ready():
             print('the clock has no estimate yet (is the drone sending log data?)')
             return
-        print('clock: %.0f Hz, packets scatter %.1f ms' % (clock.freq, clock.residual_std * 1e3))
+        print('clock: %.0f Hz, packets scatter %.1f ms' % (clock.latest().freq, clock.latest().residual_std * 1e3))
         end = time.monotonic() + 10.0
         while battery['percentage'] is None and time.monotonic() < end:
             time.sleep(0.1)
@@ -245,7 +249,7 @@ def main():
                     print('  %-8s median %.0f ms, scatter %.0f ms   (mean %.0f, std %.0f; last %d)' % (
                         which, summary.median * 1e3, summary.sigma * 1e3, summary.mean * 1e3, summary.std * 1e3, summary.n))
         print('clock: %.1f ms scatter, %d packets left out, started over %d times' % (
-            clock.residual_std * 1e3 if clock.ready else float('nan'), clock.rejected, clock.resets))
+            clock.latest().residual_std * 1e3 if clock_ready() else float('nan'), clock.rejected, clock.resets))
         if battery['lowest'] is not None:
             print('\nbattery: lowest reading %d%%' % battery['lowest'])
         print('\nrecorded as %s' % stamp)
