@@ -79,7 +79,7 @@ class ClockSample(Sample):
 
 class TickClock(Estimator):
     """Fits host_time = a + b * tick to the (tick, recv_time) of every Sample
-    of its inputs, over a sliding window, and converts ticks to host time.
+    of its inputs, over a sliding window, and publishes what it finds as ClockSamples.
 
     The packets carrying the ticks arrive with a variable delay, so
     recv_time on its own is a jittery time; the tick counter is not, and
@@ -117,9 +117,6 @@ class TickClock(Estimator):
     give or take `nominal_freq_error` (a fraction), and only the offset is worked
     out, from the Samples so far. Once `min_samples` have agreed a line is fitted,
     and its rate is measured too.
-
-    ready, freq, residual_std and host_time() are a second way to get at the line,
-    and only speak once it is fitted.
     """
     SAMPLE = ClockSample
 
@@ -153,32 +150,6 @@ class TickClock(Estimator):
         self._sums = [0.0] * 5      # sum of x, y, x*x, x*y, y*y
         for container in inputs:
             self._listen(container, self._on_input)
-
-    # -- what it says ------------------------------------------------------
-
-    @property
-    def ready(self):
-        with self._lock:
-            return self.min_samples <= len(self._points) and self._fit() is not None
-
-    @property
-    def freq(self):
-        with self._lock:
-            return 1.0 / self._require_fit()[0]
-
-    @property
-    def residual_std(self):
-        with self._lock:
-            return self._require_fit()[2]
-
-    def host_time(self, tick):
-        """Host time (on the recv_time clock) at which the counter read tick.
-
-        Raises LookupError until there are enough Samples to fit a line.
-        """
-        with self._lock:
-            slope, intercept, _ = self._require_fit()
-            return self._y0 + intercept + slope * (self._unwrap(tick, commit=False) - self._x0)
 
     # -- taking Samples in -------------------------------------------------
 
@@ -343,12 +314,6 @@ class TickClock(Estimator):
         squares = syy - intercept * sy - slope * sxy
         return slope, intercept, math.sqrt(max(squares, 0.0) / (n - 2)) if 2 < n else 0.0
 
-    def _require_fit(self):
-        fit = self._fit()
-        if fit is None or len(self._points) < self.min_samples:
-            raise LookupError('TickClock has no estimate yet')
-        return fit
-
 
 class Retimer(Estimator):
     """Republishes the Samples of a Container with event_time worked out from their tick.
@@ -417,8 +382,13 @@ class LagSample(Sample):
     the sensor signal reached 10% and 50% of its peak response; peak (signed
     like the signal) and noise (its scatter while still) say how clear that
     response was.
+
+    clock_std is how far the host times of the readings it was worked out from
+    can be trusted, in seconds: the worst of those from just before the command
+    to when the signal had settled. None if any of them was not put on the clock
+    for want of an estimate, and its arrival time was used.
     """
-    def __init__(self, command_time, command, onset, midpoint, peak, noise, axis='yaw'):
+    def __init__(self, command_time, command, onset, midpoint, peak, noise, axis='yaw', clock_std=None):
         super(LagSample, self).__init__(event_time=command_time)
         self.command_time = command_time
         self.command = command
@@ -427,6 +397,7 @@ class LagSample(Sample):
         self.peak = peak
         self.noise = noise
         self.axis = axis
+        self.clock_std = clock_std
 
     def __str__(self):
         return '%s %+.2f at %.3f: onset %.0f ms, midpoint %.0f ms (peak %+.2f, noise %.3f)' % (
@@ -475,7 +446,9 @@ class ResponseLagEstimator(Estimator):
     the response began.
 
     sticks and source are Containers, clock a TickClock: the source's Samples
-    are put on the host clock with it, the command's are already on it. What
+    are put on the host clock by the newest ClockSample it has published, the
+    command's are already on it. While there is none with an estimate, a Sample's
+    arrival time stands in for its time, and the LagSample says so (clock_std). What
     signal is watched depends on the axis, unless `signal` (a function of one
     Sample, giving a number) says otherwise:
 
@@ -518,9 +491,11 @@ class ResponseLagEstimator(Estimator):
         self.max_gap = max_gap
         self.skipped = collections.Counter()
         self._recent = collections.deque(maxlen=history)
-        self._gyro = collections.deque()        # (host time, the signal's value)
+        self._gyro = collections.deque()        # (host time, the signal's value, clock_std)
+        self._clock_sample = None               # the newest the clock has published
         self._pulse = None
         self._quiet_since = None
+        self._listen(clock, self._on_clock)
         self._listen(sticks, self._on_stick)
         self._listen(source, self._on_source)
 
@@ -572,15 +547,21 @@ class ResponseLagEstimator(Estimator):
                 self._pulse = None
                 self._quiet_since = None
 
+    def _on_clock(self, clock_sample):
+        self._clock_sample = clock_sample
+
     def _on_source(self, sample):
-        try:
-            t = self.clock.host_time(sample.tick)
-        except LookupError:
-            return                                  # the clock is not ready yet
+        clock = self._clock_sample
+        if clock is None or clock.n == 0 or sample.tick is None:
+            t, clock_std = sample.event_time, None      # not on the clock: when it arrived
+        else:
+            later = _tick_difference(sample.tick, clock.tick) / clock.freq      # seconds after the clock's tick
+            t = clock.host_at_tick + later
+            clock_std = math.hypot(clock.host_at_tick_std, later * clock.freq_std / clock.freq)
         rate = self._signal(sample)
         lag_sample = None
         with self._lock:
-            self._gyro.append((t, rate))
+            self._gyro.append((t, rate, clock_std))
             while 10.0 < t - self._gyro[0][0]:
                 self._gyro.popleft()
             pulse = self._pulse
@@ -598,13 +579,13 @@ class ResponseLagEstimator(Estimator):
 
     def _judge(self, pulse, end):
         t_cmd = pulse.command_time
-        gyro = sorted(self._gyro)       # by time: packets can arrive out of order
-        rest = [rate for t, rate in gyro if t_cmd - 0.8 <= t <= t_cmd - 0.1]
+        gyro = sorted(self._gyro, key=lambda reading: reading[0])       # by time: packets can arrive out of order
+        rest = [rate for t, rate, _ in gyro if t_cmd - 0.8 <= t <= t_cmd - 0.1]
         if len(rest) < 3:
             return self._skip('no signal before the command')
         base = statistics.median(rest)
         noise = 1.4826 * statistics.median(abs(rate - base) for rate in rest)
-        response = [(t, rate - base) for t, rate in gyro if t_cmd - 0.3 <= t <= end + self.settle]
+        response = [(t, rate - base) for t, rate, _ in gyro if t_cmd - 0.3 <= t <= end + self.settle]
         during = [(t, delta) for t, delta in response if t_cmd <= t]
         if len(during) < 5:
             return self._skip('too few readings')
@@ -623,7 +604,9 @@ class ResponseLagEstimator(Estimator):
             lags.append(when - t_cmd)
         if not all(-0.05 <= lag <= self.max_lag for lag in lags):
             return self._skip('implausible lag')
-        return LagSample(t_cmd, pulse.command, lags[0], lags[1], sign * peak, noise, self.axis)
+        stds = [std for t, _, std in gyro if t_cmd - 0.3 <= t <= end + self.settle]
+        clock_std = None if None in stds else max(stds)
+        return LagSample(t_cmd, pulse.command, lags[0], lags[1], sign * peak, noise, self.axis, clock_std)
 
     def _skip(self, reason):
         self.skipped[reason] += 1
