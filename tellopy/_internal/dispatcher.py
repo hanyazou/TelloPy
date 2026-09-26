@@ -14,7 +14,7 @@ signals = {}
 # keyword arguments over time (e.g. recv_time); this lets a receiver
 # written against the older, narrower set -- def handler(event, sender,
 # data) -- keep working, receiving only what it asks for.
-accepted_kwargs = {}
+_accepted = {}
 
 
 def _accepted_kwargs(receiver):
@@ -37,7 +37,7 @@ def connect(receiver, sig=signal.All):
     else:
         receivers = signals[sig] = []
     receivers.append(receiver)
-    accepted_kwargs[receiver] = _accepted_kwargs(receiver)
+    _accepted[receiver] = _accepted_kwargs(receiver)
 
 
 def disconnect(receiver, sig=signal.All):
@@ -49,7 +49,7 @@ def disconnect(receiver, sig=signal.All):
         if receiver in signals[sig]:
             signals[sig].remove(receiver)
     if not any(receiver in receivers for receivers in signals.values()):
-        accepted_kwargs.pop(receiver, None)
+        _accepted.pop(receiver, None)
 
 
 def send(sig, **named):
@@ -58,7 +58,7 @@ def send(sig, **named):
     else:
         receivers = signals[signal.All]
     for receiver in receivers:
-        accepted = accepted_kwargs.get(receiver)
+        accepted = _accepted.get(receiver)
         if accepted is None:
             receiver(event=sig, **named)
         else:
@@ -116,4 +116,4 @@ if __name__ == '__main__':
 
     for handler in (narrow, wide, catch_all):
         disconnect(handler, test_signal1)
-    assert narrow not in accepted_kwargs
+    assert narrow not in _accepted
