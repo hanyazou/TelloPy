@@ -2,8 +2,8 @@
 against a FakeDrone."""
 import time
 
-from tellopy._internal import protocol
 
+from tests.support import wire
 from tests.support.fake_drone import log_record
 from tests.support.harness import DroneTestCase, wait_until
 
@@ -12,7 +12,7 @@ class ConnectionTest(DroneTestCase):
 
     def test_connect_handshake_then_time_is_sent(self):
         self.connect()
-        found = self.fake.wait_for_cmd(protocol.TIME_CMD)
+        found = self.fake.wait_for_cmd(wire.TIME_CMD)
         self.assertTrue(found[0].crc_ok)
 
     def test_quit_reports_disconnect_once(self):
@@ -35,11 +35,11 @@ class CommandTest(DroneTestCase):
         drone.takeoff()
         wait_until(lambda: acks, what='the ack of takeoff')
 
-        sent = self.fake.wait_for_cmd(protocol.TAKEOFF_CMD)[0]
+        sent = self.fake.wait_for_cmd(wire.TAKEOFF_CMD)[0]
         self.assertTrue(sent.crc_ok)
         self.assertNotEqual(sent.seq, 0)
         sample = acks[0]
-        self.assertEqual((sample.name, sample.cmd, sample.seq), ('takeoff', protocol.TAKEOFF_CMD, sent.seq))
+        self.assertEqual((sample.name, sample.cmd, sample.seq), ('takeoff', wire.TAKEOFF_CMD, sent.seq))
         self.assertTrue(sample.acked)
         self.assertTrue(0 <= sample.rtt < 1.0)
         self.assertEqual(sample.event_time, sample.send_time)
@@ -50,7 +50,7 @@ class CommandTest(DroneTestCase):
         drone.subscribe(drone.EVENT_SAMPLE_COMMAND_TIMEOUT, lambda event, sender, data: timeouts.append(data))
         drone.subscribe(drone.EVENT_SAMPLE_COMMAND_ACK, lambda event, sender, data: acks.append(data))
         self.connect()
-        self.fake.wait_for_cmd(protocol.TIME_CMD)
+        self.fake.wait_for_cmd(wire.TIME_CMD)
         wait_until(lambda: not drone._Tello__pending_sends, what='replies to the startup commands')
         self.fake.ack_enabled = False
         drone.COMMAND_ACK_TIMEOUT_SEC = 0.2
@@ -72,8 +72,8 @@ class CommandTest(DroneTestCase):
         for _ in range(10):
             self.fake.send_flight_data()
             time.sleep(0.01)
-        self.fake.wait_for_cmd(protocol.LAND_CMD, count=20)
-        self.fake.wait_for_cmd(protocol.STICK_CMD, count=3)
+        self.fake.wait_for_cmd(wire.LAND_CMD, count=20)
+        self.fake.wait_for_cmd(wire.STICK_CMD, count=3)
         with self.fake.lock:
             received = list(self.fake.received)
         self.assertTrue(all(r.crc_ok for r in received))
@@ -87,7 +87,7 @@ class VideoTest(DroneTestCase):
     def test_video_stream_delivers_the_bytes_sent(self):
         drone = self.connect()
         stream = drone.get_video_stream()
-        self.fake.wait_for_cmd(protocol.VIDEO_START_CMD)
+        self.fake.wait_for_cmd(wire.VIDEO_START_CMD)
         for index, body in enumerate((b'AAAA', b'BBBB', b'CCCC')):
             self.fake.send_video(0, index, body)
         got = b''
@@ -159,5 +159,5 @@ class StickTest(DroneTestCase):
         self.assertEqual(times, sorted(times))
         self.assertTrue(all(s.tick is None and s.recv_time is None for s in sticks))
         # each one published matches one packet that reached the drone
-        on_wire = self.fake.received_cmds(protocol.STICK_CMD)
+        on_wire = self.fake.received_cmds(wire.STICK_CMD)
         self.assertLessEqual(abs(len(on_wire) - len(sticks)), 2)

@@ -3,10 +3,7 @@ import math
 import random
 import unittest
 
-from tellopy._internal.container import Container, ImuContainer
-from tellopy._internal.estimator import Retimer, TickClock
-from tellopy._internal.protocol import LogImuAtti
-from tellopy._internal.sample import Sample
+from tellopy import Container, ImuContainer, LogImuAtti, Retimer, Sample, TickClock
 
 from tests.support.synthetic import DELAY, FREQ, Log, TICK0, imu_sample, tick_at
 

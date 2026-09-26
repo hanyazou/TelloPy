@@ -5,9 +5,8 @@ the library starts passing more (recv_time, so far). So here every public
 event is subscribed to by handlers written in each style that has existed,
 and all of them must get every event.
 """
-from tellopy import Tello
-from tellopy._internal import protocol
-from tellopy._internal.sample import StickSample
+import tellopy
+from tellopy import Tello, StickSample
 
 from tests.support.fake_drone import log_record
 from tests.support.harness import DroneTestCase, wait_until
@@ -20,24 +19,24 @@ EXERCISED = {
     'EVENT_DISCONNECTED': None,
     'EVENT_WIFI': None,
     'EVENT_LIGHT': None,
-    'EVENT_FLIGHT_DATA': protocol.FlightData,
+    'EVENT_FLIGHT_DATA': tellopy.FlightData,
     'EVENT_LOG_HEADER': None,
     'EVENT_LOG_RAWDATA': None,
-    'EVENT_LOG_DATA': protocol.LogData,
+    'EVENT_LOG_DATA': tellopy.LogData,
     'EVENT_LOG_CONFIG': None,
     'EVENT_TIME': None,
     'EVENT_VIDEO_FRAME': None,
     'EVENT_VIDEO_DATA': None,
-    'EVENT_CALIBRATION_STATUS': protocol.CalibrationStatus,
+    'EVENT_CALIBRATION_STATUS': tellopy.CalibrationStatus,
     'EVENT_SAMPLE_COMMAND_ACK': None,
     'EVENT_SAMPLE_COMMAND_TIMEOUT': None,
     'EVENT_SAMPLE_STICK': StickSample,
-    'EVENT_SAMPLE_IMU': protocol.LogImuAtti,
-    'EVENT_SAMPLE_GYRO': protocol.LogGyro,
-    'EVENT_SAMPLE_TOF': protocol.LogTof,
-    'EVENT_SAMPLE_MVO': protocol.LogNewMvoFeedback,
-    'EVENT_SAMPLE_CONTROL': protocol.LogControl,
-    'EVENT_SAMPLE_RAW': protocol.LogRecord,
+    'EVENT_SAMPLE_IMU': tellopy.LogImuAtti,
+    'EVENT_SAMPLE_GYRO': tellopy.LogGyro,
+    'EVENT_SAMPLE_TOF': tellopy.LogTof,
+    'EVENT_SAMPLE_MVO': tellopy.LogNewMvoFeedback,
+    'EVENT_SAMPLE_CONTROL': tellopy.LogControl,
+    'EVENT_SAMPLE_RAW': tellopy.LogRecord,
 }
 
 # Events that don't come from a received packet, so their recv_time is None.

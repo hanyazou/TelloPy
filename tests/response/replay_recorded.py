@@ -15,10 +15,8 @@ import sys
 import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
-from tellopy._internal.container import GyroContainer, ImuContainer, StickContainer
-from tellopy._internal.estimator import ResponseLagEstimator, TickClock
-from tellopy._internal.protocol import LogGyro, LogImuAtti
-from tellopy._internal.sample import StickSample
+from tellopy import (GyroContainer, ImuContainer, LogGyro, LogImuAtti, ResponseLagEstimator, StickContainer,
+                     StickSample, TickClock)
 
 stamp = sys.argv[1]
 desktop = os.path.expanduser('~/Desktop/')
