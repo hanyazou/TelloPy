@@ -1,6 +1,8 @@
 """A real Tello against a FakeDrone: connecting, commands, video, telemetry and sticks."""
 import time
 
+from tellopy import CommandSample
+
 from tests.support import wire
 from tests.support.fake_drone import log_record
 from tests.support.harness import DroneTestCase, wait_until
@@ -37,7 +39,9 @@ class CommandTest(DroneTestCase):
         self.assertTrue(sent.crc_ok)
         self.assertNotEqual(sent.seq, 0)
         sample = acks[0]
+        self.assertIsInstance(sample, CommandSample)
         self.assertEqual((sample.name, sample.cmd, sample.seq), ('takeoff', wire.TAKEOFF_CMD, sent.seq))
+        self.assertEqual(sample.ack_payload, sent.payload)          # the fake drone echoes what it was sent
         self.assertTrue(sample.acked)
         self.assertTrue(0 <= sample.rtt < 1.0)
         self.assertEqual(sample.event_time, sample.send_time)

@@ -9,6 +9,8 @@ Code and tests written before these rules may not follow them yet.
 - A name is interface if the library's users are meant to rely on it.
   Everything else is internal.
 - Two things show which is which: a leading underscore, and `tellopy/__init__.py`, which decides what is shown outside the package.
+- `tellopy/__init__.py` is a whitelist: a class is public only if it is listed there.
+  Nothing checks that a class that is not listed was left out on purpose.
 - Programs that import `tellopy._internal` or use names with an underscore are not covered by compatibility.
 - A name that existed before keeps working.
   Making it a read-only property is acceptable.
@@ -50,13 +52,13 @@ Code and tests written before these rules may not follow them yet.
 - A contract test uses only public names and the test support modules.
   The test support modules are in `tests/support`.
   They hold what builds Samples, synthetic data and stand-ins, and may reach into internals.
+- Two checks in `tests/offline/test_interface_rules.py` keep to these rules.
+  One is that a contract test imports only from the package and reaches no private name.
+  The other is that every public class, its methods and properties, and the fields of its records are used by some contract test.
+  Arguments of a constructor, what a subclass declares (`EVENTS`, `SAMPLE`, `ID`) and the classes the library had before the timing work are left out of the second.
 - The components talk to one another only through Samples.
   A stand-in for an upstream component is a Container filled with Samples made by hand.
 - A test has an answer that does not come from the code under test: the known truth of synthetic data, a reference computed independently, or a recorded flight replayed with the same output as before.
   Comparing internal state with what the code has just set says nothing about behaviour.
 - A test is not written for a number that only a simple implementation happens to use, such as how many packets a clock discards at start-up.
   What is checked is the behaviour: that the estimate is not thrown off by the odd values seen at start-up.
-
-## 4. Not Settled
-
-- Automatic checks: that contract tests use only public names, and that every public name is used by some contract test.
