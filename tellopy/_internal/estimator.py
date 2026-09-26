@@ -384,20 +384,18 @@ class LagSample(Sample):
     """How long a sensor took to respond to one stick command.
 
     event_time is when the command it was measured from went out, the event the
-    estimate rests on; axis is which stick it was (yaw, roll, pitch). onset and midpoint are the seconds from then until
-    the sensor signal reached 10% and 50% of its peak response; peak (signed
-    like the signal) and noise (its scatter while still) say how clear that
-    response was.
+    estimate rests on; axis is which stick it was (yaw, roll, pitch). onset and
+    midpoint are the seconds from then until the sensor signal reached 10% and
+    50% of its peak response; peak (signed like the signal) and noise (its
+    scatter while still) say how clear that response was.
 
     clock_std is how far the host times of the readings it was worked out from
     can be trusted, in seconds: the worst of those from just before the command
     to when the signal had settled. None if any of them was not put on the clock
     for want of an estimate, and its arrival time was used.
     """
-    def __init__(self, command_time, command, onset, midpoint, peak, noise, axis='yaw', clock_std=None):
-        super(LagSample, self).__init__(event_time=command_time)
-        self.command_time = command_time
-        self.command = command
+    def __init__(self, event_time, onset, midpoint, peak, noise, axis='yaw', clock_std=None):
+        super(LagSample, self).__init__(event_time=event_time)
         self.onset = onset
         self.midpoint = midpoint
         self.peak = peak
@@ -406,9 +404,8 @@ class LagSample(Sample):
         self.clock_std = clock_std
 
     def __str__(self):
-        return '%s %+.2f at %.3f: onset %.0f ms, midpoint %.0f ms (peak %+.2f, noise %.3f)' % (
-            self.axis, self.command, self.command_time, self.onset * 1e3, self.midpoint * 1e3,
-            self.peak, self.noise)
+        return '%s at %.3f: onset %.0f ms, midpoint %.0f ms (peak %+.2f, noise %.3f)' % (
+            self.axis, self.event_time, self.onset * 1e3, self.midpoint * 1e3, self.peak, self.noise)
 
 
 def tilt_angle(imu, axis):
@@ -612,7 +609,7 @@ class ResponseLagEstimator(Estimator):
             return self._skip('implausible lag')
         stds = [std for t, _, std in gyro if t_cmd - 0.3 <= t <= end + self.settle]
         clock_std = None if None in stds else max(stds)
-        return LagSample(t_cmd, pulse.command, lags[0], lags[1], sign * peak, noise, self.axis, clock_std)
+        return LagSample(t_cmd, lags[0], lags[1], sign * peak, noise, self.axis, clock_std)
 
     def _skip(self, reason):
         self.skipped[reason] += 1
