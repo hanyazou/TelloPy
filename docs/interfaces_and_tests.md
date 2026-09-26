@@ -9,17 +9,24 @@ Code and tests written before these rules may not follow them yet.
 - A name is interface if the library's users are meant to rely on it.
   Everything else is internal.
 - Two things show which is which: a leading underscore, and `tellopy/__init__.py`, which decides what is shown outside the package.
-- A helper used only inside one class gets a double underscore (`__foo`).
-  A name that subclasses may use gets a single underscore (`_foo`), because a double one would break their calls.
-- A value shown outside is a read-only property.
-  Users are not meant to assign to it, and assigning is not part of the interface.
-- A value only the class itself needs is kept under an underscore name, which also keeps users from assigning to it.
 - Programs that import `tellopy._internal` or use names with an underscore are not covered by compatibility.
 - A name that existed before keeps working.
   Making it a read-only property is acceptable.
   Giving it an underscore is done only when it is very unlikely that anything outside uses it, and is judged case by case.
-- A Sample is a plain record of values.
-  Its fields are ordinary attributes and are not made read-only, and nothing forbids changing one.
+- A value shown outside is a read-only property.
+  Users are not meant to assign to it, and assigning is not part of the interface.
+- A value only the class itself needs is kept under an underscore name, whether it is given at construction or worked out later.
+  That also keeps users from assigning to it.
+- A value that only debugging or a test looks at is kept under an underscore name.
+  If it is more than that, whether it belongs in a Sample is considered.
+- What a Sample already carries is not also kept as an attribute of the object that made it.
+- A setting that need not change while the program runs is a keyword argument of the constructor.
+  A setting that gains from being changed while it runs gets a method, `set_xxx()`, as part of the interface.
+- A helper used only inside one class gets a double underscore (`__foo`).
+  A name that subclasses may use gets a single underscore (`_foo`), because a double one would break their calls.
+- A value that a base class gives every subclass, with a clear meaning, is a read-only property, for example the number of Samples a Container has received.
+- One value is not kept under two names, unless the two mean different things, as the time a command was sent and the time of the event it is.
+- A plain record of values, a Sample or a decoded message such as CalibrationStatus, has ordinary attributes and they are not made read-only.
   The library makes a new Sample instead of changing one it has published.
 
 ## 2. Defining an Interface
@@ -47,6 +54,8 @@ Code and tests written before these rules may not follow them yet.
   A stand-in for an upstream component is a Container filled with Samples made by hand.
 - A test has an answer that does not come from the code under test: the known truth of synthetic data, a reference computed independently, or a recorded flight replayed with the same output as before.
   Comparing internal state with what the code has just set says nothing about behaviour.
+- A test is not written for a number that only a simple implementation happens to use, such as how many packets a clock discards at start-up.
+  What is checked is the behaviour: that the estimate is not thrown off by the odd values seen at start-up.
 
 ## 4. Not Settled
 
