@@ -7,6 +7,7 @@ Reads ~/Desktop/tello-sticks-<stamp>.txt and tello-samples-<stamp>.txt (every st
 IMU / 20Hz gyro reading with its arrival time) and tello-lag-<stamp>.txt (what was said live). If the
 replay says what the flight said, the recording is complete and a problem seen in the air can be
 studied here; if not, something in the air was different.
+(A lag file written before the command's value was dropped from it has one more column, and is read too.)
 """
 import collections
 import os
@@ -66,13 +67,14 @@ live = collections.defaultdict(dict)
 for line in open(desktop + 'tello-lag-%s.txt' % stamp):
     f = line.split()
     if f:
-        live[f[0]][round(float(f[1]), 3)] = (float(f[3]), float(f[4]))
+        onset, midpoint = (f[3], f[4]) if len(f) == 6 else (f[2], f[3])
+        live[f[0]][round(float(f[1]), 3)] = (float(onset), float(midpoint))
 latest = clock.latest()
 print('flight %s: %d readings and stick commands replayed; clock %.1f ms scatter, %d left out, %d resets' % (
     stamp, len(feed), latest.residual_std * 1e3 if latest is not None and latest.n else float('nan'),
     clock.rejected, clock.resets))
 for name, estimator in estimators:
-    replay = dict((round(lag.command_time, 3), (lag.onset, lag.midpoint)) for lag in estimator)
+    replay = dict((round(lag.event_time, 3), (lag.onset, lag.midpoint)) for lag in estimator)
     said = live.get(name, {})
     both = sorted(set(replay) & set(said))
     diff = [1e3 * max(abs(replay[k][0] - said[k][0]), abs(replay[k][1] - said[k][1])) for k in both]
@@ -82,7 +84,7 @@ for name, estimator in estimators:
     m = estimator.summary('midpoint')
     if m.n:
         print('%-16s replay midpoint median %.0f ms (scatter %.0f)' % ('', m.median * 1e3, m.sigma * 1e3))
-        for label, pick in (('command > 0 (cw / right / forward)', lambda c: c > 0), ('command < 0 (ccw / left / backward)', lambda c: c < 0)):
-            v = [lag.midpoint * 1e3 for lag in estimator if pick(lag.command)]
+        for label, pick in (('response > 0 (cw / right / forward)', lambda p: p > 0), ('response < 0 (ccw / left / backward)', lambda p: p < 0)):
+            v = [lag.midpoint * 1e3 for lag in estimator if pick(lag.peak)]
             if v:
                 print('%-16s   %-36s n=%2d  midpoint median %.0f ms' % ('', label, len(v), np.median(v)))

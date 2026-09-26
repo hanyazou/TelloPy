@@ -84,14 +84,15 @@ class ResponseLagEstimatorTest(unittest.TestCase):
             self.assertAlmostEqual(estimator.summary('midpoint').median, flight.expected()[1], delta=0.02)
 
     def test_direction_and_size_of_the_command_make_no_difference(self):
-        estimator = self.estimate(Flight(self.PULSES))
-        lags = list(estimator)
+        flight = Flight(self.PULSES)
+        lags = list(self.estimate(flight))
+        command_of = lambda lag: flight.command(lag.event_time)          # the command the lag was measured from
         for yaw in (0.5, -0.5, 1.0, -1.0):
-            same = [lag.onset for lag in lags if lag.command == yaw]
+            same = [lag.onset for lag in lags if command_of(lag) == yaw]
             self.assertEqual(len(same), 3)
-        means = [sum(l.onset for l in lags if l.command == yaw) / 3 for yaw in (0.5, -0.5, 1.0, -1.0)]
+        means = [sum(l.onset for l in lags if command_of(l) == yaw) / 3 for yaw in (0.5, -0.5, 1.0, -1.0)]
         self.assertLess(max(means) - min(means), 0.02)
-        self.assertEqual([lag.peak > 0 for lag in lags], [lag.command > 0 for lag in lags])
+        self.assertEqual([lag.peak > 0 for lag in lags], [command_of(lag) > 0 for lag in lags])
 
     def test_a_slower_drone_reads_as_slower(self):
         fast = self.estimate(Flight(self.PULSES, delay=0.05))
@@ -105,7 +106,7 @@ class ResponseLagEstimatorTest(unittest.TestCase):
         onset, midpoint = flight.expected()
         self.assertEqual(estimator.skipped['gap in the data'], 1)
         self.assertEqual(len(estimator), len(self.PULSES) - 1)
-        self.assertNotIn(11.0, [round(lag.command_time, 1) for lag in estimator])
+        self.assertNotIn(11.0, [round(lag.event_time, 1) for lag in estimator])
         for lag in estimator:
             self.assertAlmostEqual(lag.midpoint, midpoint, delta=0.035)
 
@@ -131,13 +132,13 @@ class ResponseLagEstimatorTest(unittest.TestCase):
     def test_commands_that_do_not_start_from_rest_are_not_judged(self):
         pulses = [(4.0, 5.2, 0.5), (5.7, 6.9, -0.5), (12.0, 13.2, 0.5)]     # the second follows too soon
         estimator = self.estimate(Flight(pulses))
-        self.assertEqual([round(lag.command_time) for lag in estimator], [4, 12])
+        self.assertEqual([round(lag.event_time) for lag in estimator], [4, 12])
 
     def test_a_command_that_changes_before_it_is_judged_is_skipped(self):
         pulses = [(4.0, 4.8, 0.5), (4.9, 6.0, 0.5), (12.0, 13.2, 0.5)]
         estimator = self.estimate(Flight(pulses))
         self.assertEqual(estimator.skipped['command changed'], 1)
-        self.assertEqual([round(lag.command_time) for lag in estimator], [12])
+        self.assertEqual([round(lag.event_time) for lag in estimator], [12])
 
     def test_works_on_the_imu_gyro_too(self):
         flight = Flight(self.PULSES, gyro_rate=10.0)

@@ -44,7 +44,7 @@ started, so that the flight can be replayed exactly:
     ~/Desktop/tello-<stamp>.csv           the same, decoded (see record_log.py)
     ~/Desktop/tello-events-<stamp>.txt    when each command was given (time.monotonic()); battery=<percent>
     ~/Desktop/tello-lag-<stamp>.txt       the estimates, one per line:
-                                          <axis>/<signal> <command time> <command> <onset> <midpoint> <peak>
+                                          <axis>/<signal> <command time> <onset> <midpoint> <peak>
     ~/Desktop/tello-sticks-<stamp>.txt    every stick command sent: <time> <roll> <pitch> <throttle> <yaw>
     ~/Desktop/tello-samples-<stamp>.txt   every IMU and 20Hz gyro reading with the time it arrived
     ~/Desktop/tello-clock-<stamp>.txt     the clock's state, one line in ten
@@ -190,8 +190,8 @@ def main():
     def report(name, estimator):
         def on_lag(lag):
             print('%-11s %s' % (name, lag))
-            files.write('lag', '%s %.6f %.6f %.6f %.6f %.6f\n' % (
-                name, lag.command_time, lag.command, lag.onset, lag.midpoint, lag.peak))
+            files.write('lag', '%s %.6f %.6f %.6f %.6f\n' % (
+                name, lag.event_time, lag.onset, lag.midpoint, lag.peak))
             onset, midpoint = estimator.summary('onset'), estimator.summary('midpoint')
             print('            last %d: onset %.0f +- %.0f ms, midpoint %.0f +- %.0f ms (median +- scatter)' % (
                 onset.n, onset.median * 1e3, onset.sigma * 1e3, midpoint.median * 1e3, midpoint.sigma * 1e3))

@@ -30,7 +30,7 @@ class ResponseLagEstimatorDetailTest(unittest.TestCase):
     def test_the_summary_goes_by_the_median_so_a_slow_command_does_not_drag_it(self):
         estimator = self.estimate(Flight(self.PULSES))
         clean = estimator.summary('midpoint')
-        late = LagSample(99.0, 0.5, 0.4, 0.8, 1.0, 0.01)         # one command that arrived very late
+        late = LagSample(99.0, 0.4, 0.8, 1.0, 0.01)         # one command that arrived very late
         estimator._recent.append(late)
         skewed = estimator.summary('midpoint')
         self.assertLess(skewed.median - clean.median, 0.005)
