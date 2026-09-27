@@ -1,7 +1,7 @@
 """A real Tello against a FakeDrone: connecting, commands, video, telemetry and sticks."""
 import time
 
-from tellopy import CommandSample
+from tellopy import CommandSample, FlightData, Sample
 
 from tests.support import wire
 from tests.support.fake_drone import log_record
@@ -171,3 +171,20 @@ class CalibrationTest(DroneTestCase):
         status = got[0]
         self.assertEqual((status.steps_done, status.done), (6, True))
         wait_until(lambda: not drone.calibration_active, what='the calibration to end')
+
+
+class FlightDataTest(DroneTestCase):
+
+    def test_flight_data_is_a_sample_stamped_with_when_it_arrived(self):
+        drone = self.connect()
+        got = []
+        drone.subscribe(drone.EVENT_FLIGHT_DATA, lambda event, sender, data, recv_time: got.append((data, recv_time)))
+        self.fake.send_flight_data(battery=55)
+        wait_until(lambda: got, what='flight data')
+        data, recv_time = got[0]
+        self.assertIsInstance(data, FlightData)
+        self.assertIsInstance(data, Sample)
+        self.assertEqual(data.battery_percentage, 55)
+        self.assertEqual((data.recv_time, data.event_time), (recv_time, recv_time))
+        self.assertIsNone(data.tick)
+        self.assertIn('BAT: 55', str(data))
