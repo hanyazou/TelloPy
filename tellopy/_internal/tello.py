@@ -29,7 +29,7 @@ class Tello(object):
     EVENT_CONNECTED = event.Event('connected')
     EVENT_WIFI = event.Event('wifi')
     EVENT_LIGHT = event.Event('light')
-    EVENT_FLIGHT_DATA = event.Event('fligt_data')
+    EVENT_FLIGHT_DATA = event.Event('flight_data')
     EVENT_LOG_HEADER = event.Event('log_header')
     EVENT_LOG = EVENT_LOG_HEADER
     EVENT_LOG_RAWDATA = event.Event('log_rawdata')
