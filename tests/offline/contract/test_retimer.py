@@ -103,6 +103,12 @@ class RetimerTest(unittest.TestCase):
         errors = [o.event_time - t for o, t in list(zip(retimer, truth))[30:]]
         self.assertLess(max(abs(e) for e in errors), 0.02)
 
+    def test_its_name_says_whose_samples_it_republishes_unless_it_is_given_one(self):
+        source, clock = Container(), TickClock(Container())
+        self.assertEqual(Retimer(source, clock).name, 'Retimer(Container)')
+        self.assertEqual(Retimer(Container(name='raw'), clock).name, 'Retimer(raw)')
+        self.assertEqual(Retimer(source, clock, name='fixed').name, 'fixed')
+
     def test_it_stops_when_closed(self):
         source, retimer, _ = self.fly(seconds=3.0)
         count = retimer.count

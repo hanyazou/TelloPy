@@ -157,6 +157,11 @@ class ResponseLagEstimatorTest(unittest.TestCase):
             (sticks if isinstance(sample, StickSample) else gyros).add(sample)
         self.assertEqual(len(estimator), 0)
 
+    def test_it_has_a_name(self):
+        sticks, imus = StickContainer(), ImuContainer()
+        self.assertEqual(ResponseLagEstimator(sticks, imus, TickClock(imus)).name, 'ResponseLagEstimator')
+        self.assertEqual(ResponseLagEstimator(sticks, imus, TickClock(imus), name='yaw/imu').name, 'yaw/imu')
+
 
 class TiltResponseTest(unittest.TestCase):
     """The roll and pitch axes, answered by the tilt angle the IMU's quaternion gives."""

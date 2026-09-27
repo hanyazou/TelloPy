@@ -52,6 +52,13 @@ class ContainerTest(unittest.TestCase):
         container.add(sample_at(2.0))
         self.assertEqual(len(heard), 1)
 
+    def test_a_container_has_a_name_which_is_its_class_unless_it_is_given_one(self):
+        self.assertEqual(Container().name, 'Container')
+        self.assertEqual(ImuContainer().name, 'ImuContainer')
+        self.assertEqual(ImuContainer(name='raw').name, 'raw')
+        with self.assertRaises(AttributeError):
+            Container().name = 'other'                  # a name is given at construction, not changed after
+
     def test_a_container_refuses_samples_of_the_wrong_kind(self):
         with self.assertRaises(TypeError):
             ImuContainer().add(sample_at(1.0))

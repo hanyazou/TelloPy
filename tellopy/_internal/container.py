@@ -30,6 +30,11 @@ class Container(object):
     (drone.log) or, without a drone, the library's own -- the one that
     Tello.set_loglevel() controls.
 
+    name says which Container this is, to whoever lists or records several of
+    them. Left out, it is the name of the class (an Estimator may say more, as
+    a Retimer says whose Samples it republishes). Two Containers may have the
+    same name; telling them apart is then up to the one who records them.
+
     Samples arrive on the library's receive thread, and add() runs listeners
     there too, so a listener should be quick. Everything here may be called
     from any thread.
@@ -37,8 +42,9 @@ class Container(object):
     SAMPLE = None
     EVENTS = ()
 
-    def __init__(self, drone=None, max_age=10.0, max_count=None, log=None):
+    def __init__(self, drone=None, max_age=10.0, max_count=None, log=None, name=None):
         self._drone = drone
+        self._name = name if name is not None else type(self).__name__
         if log is None:
             log = drone.log if drone is not None else library_log
         self._log = log
@@ -55,6 +61,10 @@ class Container(object):
     def __on_event(self, event, sender, data):
         if sender is self._drone:
             self.add(data)
+
+    @property
+    def name(self):
+        return self._name
 
     @property
     def count(self):
