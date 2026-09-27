@@ -9,6 +9,7 @@ from tellopy._internal.tello import Tello
 from tellopy._internal.container import Container, GyroContainer, ImuContainer, StickContainer
 from tellopy._internal.estimator import ClockSample, Estimator, LagSample, ResponseLagEstimator, Retimer, TickClock
 from tellopy._internal.logger import Logger
+from tellopy._internal.recorder import Record, Recorder
 from tellopy._internal.protocol import (
     CalibrationStatus, FlightData, LogData, LogGyro, LogImuAtti, LogNewMvoFeedback, LogRecord, LogTof)
 from tellopy._internal.sample import CommandSample, Sample, StickSample
@@ -21,5 +22,5 @@ __all__ = [
     "Sample", "CommandSample", "StickSample", "ClockSample", "LagSample",
     "LogRecord", "LogImuAtti", "LogNewMvoFeedback", "LogGyro", "LogTof",
     "CalibrationStatus", "FlightData", "LogData", "VideoStream",
-    "Logger",
+    "Logger", "Recorder", "Record",
 ]

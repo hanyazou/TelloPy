@@ -2,8 +2,10 @@
 import math
 import random
 
-from tellopy import (GyroContainer, LogGyro, LogImuAtti, ResponseLagEstimator, Sample, StickContainer,
-                     StickSample, TickClock)
+from tellopy import (ClockSample, CommandSample, FlightData, GyroContainer, LagSample, Logger, LogGyro, LogImuAtti,
+                     LogNewMvoFeedback, LogRecord, LogTof, ResponseLagEstimator, Sample, StickContainer, StickSample,
+                     TickClock)
+from tellopy._internal.protocol import LogControl          # not a public name
 
 FREQ = 2344050.0
 DELAY = 0.020           # mean delay of a packet: what the fitted line has in it
@@ -123,3 +125,19 @@ def yaw_estimator(flight, command_shift=0.0, **options):
     for sample in flight.arrivals(command_shift):
         (sticks if isinstance(sample, StickSample) else gyros).add(sample)
     return estimator
+
+
+def one_of_each_sample(log=None):
+    """One Sample of every kind the library makes, with something in every field it has."""
+    log = log or Logger('test')
+    samples = [LogImuAtti(log, bytes(range(120))), LogGyro(log, bytes(range(37))), LogTof(log, bytes(range(4))),
+               LogNewMvoFeedback(log, bytes(range(80))), LogControl(log, bytes(range(22))), LogRecord(log, b'abc')]
+    for k, sample in enumerate(samples):
+        sample.tick, sample.recv_time, sample.event_time, sample.event_time_std = 1000 + k, 9.0 + k, 8.9 + k, 0.01
+    command = CommandSample(0x54, 7, 'takeoff', 1.5, b'\x01')
+    command._mark_acked(1.6, b'\x02')
+    return samples + [
+        FlightData(9.5, bytes(range(24))), StickSample(1.0, 0.5, 0.0, -0.5, 0.25, True), command,
+        ClockSample(5, 2.0, n=3, host_at_tick=1.0, freq=2344062.0, host_at_tick_std=0.01, freq_std=1.0,
+                    residual_std=0.02, rejected=1, resets=2),
+        LagSample(3.0, 0.1, 0.2, 1.0, 0.01, 'yaw', 0.004), Sample(2.0, tick=5, recv_time=2.1, event_time_std=0.01)]
