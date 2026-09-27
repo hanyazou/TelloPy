@@ -173,6 +173,18 @@ class CalibrationTest(DroneTestCase):
         wait_until(lambda: not drone.calibration_active, what='the calibration to end')
 
 
+class NameTest(DroneTestCase):
+
+    def test_a_drone_has_a_name_which_is_its_class_unless_it_is_given_one(self):
+        drone = self.start_drone()
+        self.assertEqual(drone.name, 'Tello')
+        with self.assertRaises(AttributeError):
+            drone.name = 'renamed'                      # given at construction, not changed after
+
+    def test_a_drone_can_be_given_a_name(self):
+        self.assertEqual(self.start_drone(name='the other').name, 'the other')
+
+
 class FlightDataTest(DroneTestCase):
 
     def test_flight_data_is_a_sample_stamped_with_when_it_arrived(self):
