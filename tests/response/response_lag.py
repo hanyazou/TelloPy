@@ -40,8 +40,8 @@ A Recorder leaves one file behind, ~/Desktop/tello-<stamp>.jsonl, named by the t
 flight started, so that the flight can be replayed exactly and studied afterwards:
 the drone's events (the stick commands, the IMU and the 20Hz gyro readings with the
 time they arrived, the flight data, the raw log messages; not the video), the
-ClockSamples of the clock, the LagSamples of each estimator under its name (yaw/gyro20,
-yaw/imu, ...), and notes: takeoff, <command>_start and <command>_stop, land.
+ClockSamples of the clock, the IMU's and the gyro's Samples as a Retimer makes them, the LagSamples
+of each estimator under its name (yaw/gyro20, yaw/imu, ...), and notes: takeoff, <command>_start and <command>_stop, land.
 tellopy.Recorder(path).read() reads it back; tests/response/replay_recorded.py <stamp>
 replays it.
 
@@ -110,6 +110,7 @@ def main():
     imus = tellopy.ImuContainer(drone)
     gyros = tellopy.GyroContainer(drone)
     clock = tellopy.TickClock(imus)
+    retimed = [tellopy.Retimer(imus, clock), tellopy.Retimer(gyros, clock)]       # recorded, to see what they make of a flight
 
     def clock_ready():
         latest = clock.latest()
@@ -125,7 +126,7 @@ def main():
 
     # what the flight leaves behind
     recorder = tellopy.Recorder('%s/Desktop/tello-%s.jsonl' % (os.getenv('HOME'), stamp),
-                                sources=[drone, clock] + estimators,
+                                sources=[drone, clock] + retimed + estimators,
                                 exclude=[drone.EVENT_VIDEO_DATA, drone.EVENT_VIDEO_FRAME, drone.EVENT_LOG_DATA])
     recorder.start()
 

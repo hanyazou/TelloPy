@@ -4,6 +4,7 @@ The script flies a drone, so that it still runs to the end and leaves its
 records behind is worth checking without one."""
 import collections
 import contextlib
+import importlib.util
 import io
 import os
 import sys
@@ -20,7 +21,7 @@ from tellopy._internal import tello as tello_module
 
 from tests.support.fake_drone import FakeDrone, log_record
 from tests.support.harness import free_udp_port
-from tests.response import response_lag
+from tests.response import plot_recording, response_lag
 
 
 class ResponseLagTest(unittest.TestCase):
@@ -101,9 +102,23 @@ class ResponseLagTest(unittest.TestCase):
         self.assertNotIn(tellopy.Tello.EVENT_VIDEO_DATA.name, events)               # the video is left out
         containers = collections.Counter(r.name for r in records if r.kind == 'container')
         self.assertGreater(containers['TickClock'], 0)
+        self.assertGreater(containers['Retimer(ImuContainer)'], 0)
+        self.assertGreater(containers['Retimer(GyroContainer)'], 0)
         # the fake drone's records give no response, so no pulse is judged, and they are counted as skipped
         self.assertIn('judged 0 pulses; skipped', printed)
         self.assertIn('started over', printed)                  # the clock's summary is printed at the end
+
+    @unittest.skipUnless(importlib.util.find_spec('matplotlib'), 'matplotlib is not installed')
+    def test_the_recording_can_be_drawn(self):
+        self.fly('--axes', 'yaw', '--pulses', '2', '--rest', '0.2', '--settle', '0.2')
+        recording = [os.path.join(self.home, 'Desktop', f) for f in os.listdir(self.home + '/Desktop') if f.endswith('.jsonl')][0]
+        picture = os.path.join(self.home, 'graphs.png')
+        output = io.StringIO()
+        with mock.patch.object(sys, 'argv', ['plot_recording.py', recording, '--save', picture]), \
+                contextlib.redirect_stdout(output):
+            plot_recording.main()
+        self.assertGreater(os.path.getsize(picture), 10000)
+        self.assertIn('Samples of a Retimer that ran in the air', output.getvalue())
 
 
 if __name__ == '__main__':

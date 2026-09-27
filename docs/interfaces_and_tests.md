@@ -47,6 +47,7 @@ Code and tests written before these rules may not follow them yet.
   A contract test checks what a docstring promises.
   A detail test checks specifics: particular values, thresholds, how something is worked out.
   Contract tests are in `tests/offline/contract` and detail tests in `tests/offline/detail`.
+  `tests/data` holds recorded flights that a test replays, such as the two `tests/response/test_recorded_flights.py` reads.
 - A test may reach into internals.
   Adding a public name only so that a test can reach something is not done.
 - A contract test uses only public names and the test support modules.
