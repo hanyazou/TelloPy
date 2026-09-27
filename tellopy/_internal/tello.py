@@ -88,10 +88,12 @@ class Tello(object):
     LOG_DEBUG = logger.LOG_DEBUG
     LOG_ALL = logger.LOG_ALL
 
-    def __init__(self, port=9000, video_port=6038, command_ack_timeout=3.0):
+    def __init__(self, port=9000, video_port=6038, command_ack_timeout=3.0, name=None):
         # command_ack_timeout is how long an outgoing command may wait for its
         # matching response, in seconds, before we give up on it and evict it
-        # from __pending_sends.
+        # from __pending_sends. name says which drone this is, to whoever records
+        # several of them; left out, it is the name of the class.
+        self.__name = name if name is not None else type(self).__name__
         self.tello_addr = ('192.168.10.1', 8889)
         self.debug = False
         self.pkt_seq_num = 0x01e4
@@ -188,6 +190,11 @@ class Tello(object):
         buf = 'conn_req:%c%c' % (chr(port0), chr(port1))
         log.info('send connection request (cmd="%s%02x%02x")' % (str(buf[:-2]), port0, port1))
         return self.send_packet(Packet(buf))
+
+    @property
+    def name(self):
+        """Which drone this is, when there are several: the name it was given, or that of the class."""
+        return self.__name
 
     def subscribe(self, signal, handler):
         """Subscribe a event such as EVENT_CONNECTED, EVENT_FLIGHT_DATA, EVENT_VIDEO_FRAME and so on."""
