@@ -64,9 +64,9 @@ Records are referred to by name; the id in the log data message is given once.
 
 - **tick**: a hardware counter running at approximately 2,344,062 Hz, carried in every `0x1051` log record.
   It is 32 bits and wraps about every 30.5 minutes.
-  The rate is not a constant: fits over whole flights gave 2,343,808 to 2,344,864 Hz.
+  The rate is not a constant: the fit over the two flights in `tests/data` gave 2,343,890 and 2,343,970 Hz.
 - Tick can be converted to host time with a linear regression, `host_time = a + tick / freq`.
-  Arrival times scatter around that line by 25-35 ms (standard deviation).
+  Arrival times scatter around that line by 23.0 and 27.2 ms (standard deviation) in those flights.
 - **`LogImuAtti`** (id 2048, IMU, 10 Hz): acceleration, gyroscope, and a quaternion; the roll and pitch angles computed from the quaternion follow the sticks cleanly.
 - **`LogGyro`** (id 1305, 20 Hz): three pipeline stages of 3-axis gyroscope readings.
   The z of each stage correlates 0.96-0.99 with the IMU's gyroscope.
@@ -90,7 +90,7 @@ Records are referred to by name; the id in the log data message is given once.
 - **On connecting, the drone first sends a few stale records** — three IMU records, all with one arrival time, whose ticks are those of about 3.5 s after the drone booted — and then continues from the counter's present value (tens of seconds later).
   A clock fitted through these and the real ones is nonsense (a rate of 40-59 MHz and a scatter of a second was seen) for as long as they stay in its window.
 - Packets are lost.
-  In the 20 Hz gyro stream 6-13% of the intervals were longer than 75 ms, 0.3-2% longer than 150 ms, the longest 250-600 ms; in the IMU stream 8-15% of the 100 ms intervals were missing a record.
+  In the 20 Hz gyro stream 17-20% of the intervals were longer than 75 ms, about 4% longer than 150 ms, the longest 315-783 ms; in the IMU stream 19-23% of the 100 ms intervals were missing a record.
 
 ## 4. The Link and the Commands
 
@@ -99,7 +99,7 @@ Records are referred to by name; the id in the log data message is given once.
   Half the round trip is therefore not used to correct `event_time` (which would also assume a symmetric link).
 - **Stick commands leave the host late, and irregularly.**
   They are sent from the receive loop, once per packet received.
-  Over a flight (1,924 commands in 67 s) the interval between them had a median of 44 ms, a 95th percentile of 116 ms and a maximum of 264 ms; in another flight, a stick value set by the program went out 4-110 ms later (median 39 ms, mean 48 ms; 20 pulses).
+  In the two flights in `tests/data` (1,765 and 2,662 commands, 65 and 95 s) the interval between them had a median of 48 ms, a 95th percentile of 124-127 ms and a maximum of 314-783 ms.
 - The stick command has no acknowledgement; its `StickSample` timestamp, taken right before the packet is handed to the socket, is what a command is timed from.
 
 ## 5. The Clock
@@ -129,22 +129,22 @@ What is watched, per axis:
 | pitch | the pitch angle, likewise                                     |
 | throttle | none yet: ToF is position-like and depends on how long the pulse is; MVO's velocity carries MVO's own 0.2-0.9 s delay; the vertical acceleration is too weak (SNR 5-9) |
 
-The angles, not the angular rates, follow roll and pitch commands cleanly (SNR 20-170, the same from flight to flight and for pulses of 0.3 to 0.6 s); the rates are brief bursts that 10-20 Hz sampling barely catches.
+The angles, not the angular rates, follow roll and pitch commands cleanly (SNR 21-172, over the 0.6 s roll and pitch pulses of the flight in `tests/data`); the rates are brief bursts that 10-20 Hz sampling barely catches.
 
-Results, from the command's send time (three yaw flights of 20, 12 and 12 pulses and two roll/pitch flights of 12 + 12 pulses; the range of the flights' medians, in milliseconds):
+Results, from the command's send time, from the two flights in `tests/data` (12 pulses attempted on each axis; milliseconds, median with robust scatter in brackets):
 
-| Signal                          | onset    | midpoint      | scatter (robust) |
-|---------------------------------|----------|---------------|------------------|
-| yaw rate, `LogGyro` stage 0     | 64-66    | 91-108        | 4-13             |
-| yaw rate, `LogImuAtti`          | 66-77    | 127-135       | 23-31            |
-| roll angle                      | about 165| 249-266       | 6-24             |
-| pitch angle                     | about 165| 260-263       | 10-18            |
+| Signal                       | judged   | onset    | midpoint |
+|-------------------------------|----------|----------|----------|
+| yaw rate, `LogGyro` stage 0   | 11 of 12 | 45 (8)   | 83 (19)  |
+| yaw rate, `LogImuAtti`        | 10 of 12 | 65 (30)  | 111 (14) |
+| roll angle                    | 5 of 12  | 126 (18) | 249 (5)  |
+| pitch angle                   | 8 of 12  | 160 (22) | 262 (19) |
 
-- These agree from flight to flight to within the scatter, and between directions (clockwise / counter-clockwise, and, in the latest flight, right / left and forward / backward) and between stick sizes.
+- These agree between directions (clockwise / counter-clockwise for yaw, right / left and forward / backward for roll and pitch) and between stick sizes, within each flight.
 - Sampled at 20 Hz the 10% point reads early by about 18 ms (a straight line drawn across the curved start of the response); the 50% point is much less affected and is the one to trust in absolute terms.
   Both move one for one with the real lag.
-- The lags have a heavy tail: now and then a command is slow to arrive (2 of 20 pulses in one flight, 100-250 ms late, with no gap in the data).
-  A mean and a standard deviation are dragged around by it, so the median and a robust scatter (the median absolute deviation) are reported first.
+- The lags have a tail: the largest deviation from a signal's own median, in these two flights, was 52 ms (one pitch pulse).
+  A mean and a standard deviation would be dragged around by an outlier like that, so the median and a robust scatter (the median absolute deviation) are reported first.
 - What is measured is the response of that signal behind the command: the drone's own response and the time its reading takes to reach the host, with the command's trip in front.
   The parts cannot be told apart here.
 
@@ -154,6 +154,16 @@ Results, from the command's send time (three yaw flights of 20, 12 and 12 pulses
 - `tests/response/response_lag.py` is a flight experiment.
   It records everything the estimators saw — every stick command, every IMU and gyro reading with its arrival time, and the clock's state — and `tests/response/replay_recorded.py` replays a recorded flight with the same inputs in the same order.
   A replay said what the flight had said, to 0.0 ms; that is what found the start-up problem of section 3.
+- The Retimer and the `Recorder` were flown in two flights on 2026-09-27: a yaw flight of 65 s and a roll and pitch flight of 95 s, each with a Retimer for the IMU and one for the gyro.
+  A replay of each recording made the same `event_time` and `event_time_std` as the Retimers had in the air (1,576 and 2,481 Samples; the largest difference in `event_time` 0 s), and the same lags as the estimators had said.
+  The spread (robust sigma) of the usual intervals between readings was 0.8 and 1.3 ms by arrival and 0.1 and 0.2 ms retimed for the 20 Hz gyro, and 1.0 and 1.4 ms by arrival and 0.4 ms retimed for the 10 Hz IMU.
+  The clock's `host_at_tick_std` was 10 ms or more at the start, and 2.0 and 2.4 ms at the end of the flights.
+  The two recordings, cut down to what the scripts read, are in `tests/data` (`tello-2026-09-27_140553.jsonl`, the yaw flight, and `tello-2026-09-27_142105.jsonl`, the roll and pitch flight), and `tests/response/test_recorded_flights.py` replays them.
+  Graphs of the two, made by `tests/response/plot_recording.py`:
+
+  ![the yaw flight](files/tello-2026-09-27_140553.png)
+
+  ![the roll and pitch flight](files/tello-2026-09-27_142105.png)
 
 ## 8. Open Items
 
@@ -162,7 +172,6 @@ Results, from the command's send time (three yaw flights of 20, 12 and 12 pulses
   - `Container.window()` stops at the first Sample older than the start of the window, which assumes `event_time` does not step backwards; a retimed series can step backwards when the estimate changes.
   - Whether a Container of retimed Samples can replace a raw one for a consumer.
   - In what order the two subscribers of one Container (the clock and the Retimer) are called.
-- The Retimer and the `Recorder` have been tried on synthetic data and on recorded flights, not on a flight made with them.
 - How an Estimator's failure reaches consumers (an error code on the Sample has been mentioned).
   With nothing of the kind, a Retimer cannot tell a clock still starting up from one that has lost its estimate.
 - Samples that have `recv_time` but no `tick` (camera frames, for example): nothing to correct them with yet.
