@@ -244,3 +244,7 @@ class TickClockTest(unittest.TestCase):
         for k in range(10):
             source.add(Sample(event_time=1.0 + k, tick=1000 * k, recv_time=1.0 + k))
         self.assertEqual(clock.count, 0)
+
+    def test_it_has_a_name(self):
+        self.assertEqual(TickClock(Container()).name, 'TickClock')
+        self.assertEqual(TickClock(Container(), name='imu clock').name, 'imu clock')

@@ -29,6 +29,10 @@ class EstimatorTest(unittest.TestCase):
         self.assertEqual([s.event_time for s in heard], [2.0, 4.0, 6.0])
         self.assertEqual(estimator.latest().event_time, 6.0)
 
+    def test_it_has_a_name_like_any_container(self):
+        self.assertEqual(Doubling(Container()).name, 'Doubling')
+        self.assertEqual(Estimator(name='mine').name, 'mine')
+
     def test_closing_stops_it_listening_to_its_inputs(self):
         source = Container()
         estimator = Doubling(source)
