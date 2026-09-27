@@ -49,6 +49,7 @@ The direction so far:
 - The accuracy of `event_time` is a field of the base Sample, `event_time_std` (seconds; `None` for not estimated).
   A Sample the Retimer cannot convert goes out as it came.
 - An Estimator's result is meant to reach consumers as Samples, with its state and accuracy in the Sample itself, not through a separate query.
+- A `Recorder` writes the events of drones and the Samples of Containers and Estimators to a file, one JSON line to a record, and reads them back; a Sample comes back as an object of its class.
 
 ### Boundary with ROS2
 
@@ -161,7 +162,7 @@ Results, from the command's send time (three yaw flights of 20, 12 and 12 pulses
   - `Container.window()` stops at the first Sample older than the start of the window, which assumes `event_time` does not step backwards; a retimed series can step backwards when the estimate changes.
   - Whether a Container of retimed Samples can replace a raw one for a consumer.
   - In what order the two subscribers of one Container (the clock and the Retimer) are called.
-- `ready`, `freq`, `residual_std` and `host_time()` of the clock say what the `ClockSample`s say; removing them means moving their users to Samples.
+- The Retimer and the `Recorder` have been tried on synthetic data and on recorded flights, not on a flight made with them.
 - How an Estimator's failure reaches consumers (an error code on the Sample has been mentioned).
   With nothing of the kind, a Retimer cannot tell a clock still starting up from one that has lost its estimate.
 - Samples that have `recv_time` but no `tick` (camera frames, for example): nothing to correct them with yet.
