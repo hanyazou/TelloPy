@@ -732,7 +732,7 @@ class Tello(object):
             log.debug("recv: light: %s" % byte_to_hexstring(data[9:-2]))
             self.__publish(event=self.EVENT_LIGHT, data=data[9:], recv_time=recv_time)
         elif cmd == FLIGHT_MSG:
-            flight_data = FlightData(data[9:])
+            flight_data = FlightData(recv_time, data[9:])
             flight_data.wifi_strength = self.wifi_strength
             log.debug("recv: flight data: %s" % str(flight_data))
             self.__publish(event=self.EVENT_FLIGHT_DATA, data=flight_data, recv_time=recv_time)

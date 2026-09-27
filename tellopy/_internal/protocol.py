@@ -137,8 +137,14 @@ class Packet(object):
         return datetime.datetime(now.year, now.month, now.day, hour, min, sec, millisec)
 
 
-class FlightData(object):
-    def __init__(self, data):
+class FlightData(Sample):
+    """What the drone says about its flight (cmd FLIGHT_MSG, about 10 Hz).
+
+    A Sample without a tick: recv_time is when the message arrived, and event_time
+    is provisional, set to recv_time like a log record's.
+    """
+    def __init__(self, recv_time, data):
+        super(FlightData, self).__init__(event_time=recv_time, recv_time=recv_time)
         self.battery_low = 0
         self.battery_lower = 0
         self.battery_percentage = 0
