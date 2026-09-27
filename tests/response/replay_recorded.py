@@ -3,11 +3,10 @@ estimators had in the air, and compare with what they said then.
 
     python3 tests/response/replay_recorded.py 2026-09-24_203045
 
-Reads ~/Desktop/tello-sticks-<stamp>.txt and tello-samples-<stamp>.txt (every stick command and every
-IMU / 20Hz gyro reading with its arrival time) and tello-lag-<stamp>.txt (what was said live). If the
-replay says what the flight said, the recording is complete and a problem seen in the air can be
-studied here; if not, something in the air was different.
-(A lag file written before the command's value was dropped from it has one more column, and is read too.)
+Reads ~/Desktop/tello-<stamp>.jsonl (or the file named, if the argument ends in .jsonl): the stick
+commands and the IMU and 20Hz gyro readings that the drone's events carried, in the order they came,
+and the LagSamples the estimators made live. If the replay says what the flight said, the recording
+is complete and a problem seen in the air can be studied here; if not, something in the air was different.
 """
 import collections
 import os
@@ -17,70 +16,49 @@ import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..'))
 from tests.support import lags
-from tellopy import (GyroContainer, ImuContainer, LogGyro, LogImuAtti, ResponseLagEstimator, StickContainer,
-                     StickSample, TickClock)
+from tellopy import (GyroContainer, ImuContainer, LagSample, Recorder, ResponseLagEstimator, StickContainer,
+                     Tello, TickClock)
 
-stamp = sys.argv[1]
-desktop = os.path.expanduser('~/Desktop/')
+argument = sys.argv[1]
+path = argument if argument.endswith('.jsonl') else os.path.expanduser('~/Desktop/tello-%s.jsonl' % argument)
 
-feed = []                                   # (time, container name, sample)
-for line in open(desktop + 'tello-samples-%s.txt' % stamp):
-    f = line.split()
-    if not f:
-        continue
-    if f[0] == 'imu':
-        s = LogImuAtti()
-        s.gyro_z, s.q0, s.q1, s.q2, s.q3 = (float(x) for x in f[3:8])
-        name = 'imu'
-    else:
-        s = LogGyro()
-        s.stages = tuple((0.0, 0.0, float(z)) for z in f[3:6])
-        name = 'gyro'
-    s.recv_time = s.event_time = float(f[1])
-    s.tick = int(f[2])
-    feed.append((s.recv_time, name, s))
-axes = set()
-for line in open(desktop + 'tello-sticks-%s.txt' % stamp):
-    f = line.split()
-    if not f:
-        continue
-    t, roll, pitch, throttle, yaw = (float(x) for x in f)
-    axes.update(a for a, v in (('roll', roll), ('pitch', pitch), ('yaw', yaw)) if abs(v) > 0.05)
-    feed.append((t, 'stick', StickSample(t, roll, pitch, throttle, yaw, False)))
-feed.sort(key=lambda f: f[0])
-
+records = list(Recorder(path).read())
 sticks, imus, gyros = StickContainer(), ImuContainer(), GyroContainer()
+target = {Tello.EVENT_SAMPLE_STICK.name: sticks, Tello.EVENT_SAMPLE_IMU.name: imus, Tello.EVENT_SAMPLE_GYRO.name: gyros}
+feed = [r for r in records if r.kind == 'event' and r.name in target]
+live = collections.defaultdict(dict)                    # estimator name -> command time -> (onset, midpoint)
+for r in records:
+    if r.kind == 'container' and isinstance(r.item, LagSample):
+        live[r.name][round(r.item.event_time, 3)] = (r.item.onset, r.item.midpoint)
+axes = set()
+for r in feed:
+    if r.name == Tello.EVENT_SAMPLE_STICK.name:
+        axes.update(a for a, v in (('roll', r.item.roll), ('pitch', r.item.pitch), ('yaw', r.item.yaw)) if abs(v) > 0.05)
+
 clock = TickClock(imus)
 estimators = []
 for axis in ('yaw', 'roll', 'pitch'):
     if axis not in axes:
         continue
     if axis == 'yaw':
-        estimators += [('yaw/gyro20', ResponseLagEstimator(sticks, gyros, clock, axis='yaw', stage=0)),
-                       ('yaw/imu', ResponseLagEstimator(sticks, imus, clock, axis='yaw'))]
+        estimators += [ResponseLagEstimator(sticks, gyros, clock, axis='yaw', stage=0, name='yaw/gyro20'),
+                       ResponseLagEstimator(sticks, imus, clock, axis='yaw', name='yaw/imu')]
     else:
-        estimators += [('%s/imu' % axis, ResponseLagEstimator(sticks, imus, clock, axis=axis))]
-target = {'imu': imus, 'gyro': gyros, 'stick': sticks}
-for _, name, sample in feed:
-    target[name].add(sample)
+        estimators += [ResponseLagEstimator(sticks, imus, clock, axis=axis, name='%s/imu' % axis)]
+for r in feed:
+    target[r.name].add(r.item)
 
-live = collections.defaultdict(dict)
-for line in open(desktop + 'tello-lag-%s.txt' % stamp):
-    f = line.split()
-    if f:
-        onset, midpoint = (f[3], f[4]) if len(f) == 6 else (f[2], f[3])
-        live[f[0]][round(float(f[1]), 3)] = (float(onset), float(midpoint))
 latest = clock.latest()
 print('flight %s: %d readings and stick commands replayed; clock %.1f ms scatter, %d left out, %d resets' % (
-    stamp, len(feed), latest.residual_std * 1e3 if latest is not None and latest.n else float('nan'),
+    argument, len(feed), latest.residual_std * 1e3 if latest is not None and latest.n else float('nan'),
     latest.rejected if latest is not None else 0, latest.resets if latest is not None else 0))
-for name, estimator in estimators:
+for estimator in estimators:
     replay = dict((round(lag.event_time, 3), (lag.onset, lag.midpoint)) for lag in estimator)
-    said = live.get(name, {})
+    said = live.get(estimator.name, {})
     both = sorted(set(replay) & set(said))
     diff = [1e3 * max(abs(replay[k][0] - said[k][0]), abs(replay[k][1] - said[k][1])) for k in both]
     print('%-16s live judged %2d | replay judged %2d | same pulses %2d%s | replay skipped %s' % (
-        name, len(said), len(replay), len(both),
+        estimator.name, len(said), len(replay), len(both),
         ' (largest difference %.1f ms)' % max(diff) if diff else '', dict(estimator._skipped) or 'none'))
     recent = list(estimator)[-20:]
     if recent:

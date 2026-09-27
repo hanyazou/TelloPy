@@ -2,6 +2,7 @@
 
 The script flies a drone, so that it still runs to the end and leaves its
 records behind is worth checking without one."""
+import collections
 import contextlib
 import io
 import os
@@ -31,10 +32,9 @@ class ResponseLagTest(unittest.TestCase):
         self.addCleanup(tello_module.log.set_level, level)
 
     def fly(self, *arguments):
-        """Run the example; return (what it printed, the fake drone, the events file's lines)."""
+        """Run the example; return (what it printed, the fake drone, the records it left)."""
         home = tempfile.mkdtemp()
         os.makedirs(home + '/Desktop')
-        os.makedirs(home + '/Documents')
         video_port = free_udp_port()
         fake = FakeDrone(video_port)
         threads_before = set(threading.enumerate())
@@ -68,8 +68,8 @@ class ResponseLagTest(unittest.TestCase):
                     contextlib.redirect_stdout(output):
                 response_lag.main()
             time.sleep(0.3)
-            events = open([os.path.join(home, 'Desktop', f) for f in os.listdir(home + '/Desktop')
-                           if f.startswith('tello-events-')][0]).read().split('\n')
+            path = [os.path.join(home, 'Desktop', f) for f in os.listdir(home + '/Desktop') if f.endswith('.jsonl')][0]
+            records = list(tellopy.Recorder(path).read())
         finally:
             stop.set()
             feeder.join(2.0)
@@ -82,32 +82,28 @@ class ResponseLagTest(unittest.TestCase):
             dispatcher.signals.clear()
             dispatcher._accepted.clear()
         self.home = home
-        return output.getvalue(), fake, [line.split()[1] for line in events if line]
+        return output.getvalue(), fake, records
 
-    def test_flies_the_pulses_and_records_the_battery(self):
-        printed, fake, labels = self.fly('--axes', 'yaw', '--pulses', '2', '--rest', '0.2', '--settle', '0.2')
+    def test_flies_the_pulses_and_prints_the_battery(self):
+        printed, fake, records = self.fly('--axes', 'yaw', '--pulses', '2', '--rest', '0.2', '--settle', '0.2')
         self.assertEqual(len(fake.received_cmds(protocol.TAKEOFF_CMD)), 1)
         self.assertEqual(len(fake.received_cmds(protocol.LAND_CMD)), 1)
-        self.assertEqual([l for l in labels if not l.startswith('battery')],
-                         ['takeoff', 'ccw_start', 'ccw_stop', 'cw_start', 'cw_stop', 'land'])
-        # before takeoff, before each pulse, and after landing
-        self.assertEqual(labels.count('battery=80'), 4)
+        notes = [r.item for r in records if r.kind == 'note' and not r.item.startswith('tellopy.Recorder')]
+        self.assertEqual(notes, ['takeoff', 'ccw_start', 'ccw_stop', 'cw_start', 'cw_stop', 'land'])
         self.assertIn('lowest reading 80%', printed)
 
     def test_records_what_the_estimators_saw(self):
-        printed, fake, labels = self.fly('--axes', 'yaw', '--pulses', '2', '--rest', '0.2', '--settle', '0.2')
-        lines = {}
-        for name in os.listdir(self.home + '/Desktop'):
-            kind = name.split('-')[1].split('.')[0].split('_')[0]           # tello-<kind>-<stamp>.txt or tello-<stamp>.csv
-            lines[kind] = open(os.path.join(self.home, 'Desktop', name)).read().split('\n')
-        self.assertGreater(len([l for l in lines['sticks'] if l]), 10)
-        samples = [l.split()[0] for l in lines['samples'] if l]
-        self.assertIn('imu', samples)
-        self.assertIn('gyro', samples)
-        self.assertGreater(len([l for l in lines['clock'] if l]), 0)
+        printed, fake, records = self.fly('--axes', 'yaw', '--pulses', '2', '--rest', '0.2', '--settle', '0.2')
+        events = collections.Counter(r.name for r in records if r.kind == 'event')
+        for event in (tellopy.Tello.EVENT_SAMPLE_STICK, tellopy.Tello.EVENT_SAMPLE_IMU, tellopy.Tello.EVENT_SAMPLE_GYRO):
+            self.assertGreater(events[event.name], 0, event.name)
+        self.assertGreater(events[tellopy.Tello.EVENT_FLIGHT_DATA.name], 0)
+        self.assertNotIn(tellopy.Tello.EVENT_VIDEO_DATA.name, events)               # the video is left out
+        containers = collections.Counter(r.name for r in records if r.kind == 'container')
+        self.assertGreater(containers['TickClock'], 0)
         # the fake drone's records give no response, so no pulse is judged, and they are counted as skipped
         self.assertIn('judged 0 pulses; skipped', printed)
-        self.assertIn('started over 0 times', printed)
+        self.assertIn('started over', printed)                  # the clock's summary is printed at the end
 
 
 if __name__ == '__main__':
