@@ -432,7 +432,10 @@ def draw_text(image, text, row):
             pos =  (left_mergin, height + font_size * row + 1)
         else:
             pos =  (left_mergin, font_size * (row + 1))
-        cv2.putText(image, text, pos, font, font_scale, bg_color, 6)
+        for dx in (-d, 0, d):
+            for dy in (-d, 0, d):
+                if dx or dy:
+                    cv2.putText(image, text, (pos[0] + dx, pos[1] + dy), font, font_scale, bg_color, 1)
         cv2.putText(image, text, pos, font, font_scale, font_color, 1)
 
 def recv_thread(drone):
@@ -458,8 +461,10 @@ def recv_thread(drone):
                     draw_text(image, 'TelloPy: joystick_and_video ' + str(flight_data), 0)
                 if log_data:
                     draw_text(image, 'MVO: ' + str(log_data.mvo), -3)
-                    draw_text(image, ('IMU: ' + str(log_data.imu))[0:52], -2)
-                    draw_text(image, '     ' + ('IMU: ' + str(log_data.imu))[52:], -1)
+                    imu_text = 'IMU: ' + str(log_data.imu)
+                    split_at = imu_text.index(' QUATERNION:')
+                    draw_text(image, imu_text[:split_at], -2)
+                    draw_text(image, '    ' + imu_text[split_at:], -1)
                 new_image = image
                 if frame.time_base < 1.0/60:
                     time_base = 1.0/60
