@@ -422,50 +422,45 @@ class Tello(object):
         return self.send_packet_data(TAKE_PICTURE_COMMAND, type=0x68)
 
     def go_up_absolute(self, val):
-        """go_up_absolute tells the drone to ascend an absolute value. 
-        Pass in an int which represents the height in cm"""
-
+        """Ascend by an absolute distance.
+        Pass in an int which represents the height in cm."""
         log.info('go up absolute(val=%d)' % val)
-        packet = Packet(cmd=f"up {str(val)}")
+        packet = Packet(cmd='up %d' % val)
         self.send_packet(packet)
-    
+
     def go_down_absolute(self, val):
-        """go_down_absolute tells the drone to descend an absolute value. 
-        Pass in an int which represents the height in cm"""
-
+        """Descend by an absolute distance.
+        Pass in an int which represents the height in cm."""
         log.info('go down absolute(val=%d)' % val)
-        packet = Packet(cmd=f"down {str(val)}")
+        packet = Packet(cmd='down %d' % val)
         self.send_packet(packet)
-        
-    def go_right_absolute(self, val):
-        """go_right_absolute tells the drone to move an absolute right.
-        Pass in an int which represents the height in cm"""
 
-        log.info("go right(val=%d)" % val)
-        packet = Packet(cmd=f"right {str(val)}")
+    def go_right_absolute(self, val):
+        """Move right by an absolute distance.
+        Pass in an int which represents the distance in cm."""
+        log.info('go right absolute(val=%d)' % val)
+        packet = Packet(cmd='right %d' % val)
         self.send_packet(packet)
 
     def go_left_absolute(self, val):
-        """go_left_absolute tells the drone to move an absolute distance left. 
-        Pass in an int which represents the height in cm"""        
-        log.info("go left(val=%d)" % val)
-        packet = Packet(cmd=f"left {str(val)}")
+        """Move left by an absolute distance.
+        Pass in an int which represents the distance in cm."""
+        log.info('go left absolute(val=%d)' % val)
+        packet = Packet(cmd='left %d' % val)
         self.send_packet(packet)
-    
-    def rotate_cw_absolute(self, val):
-        """rotate_cw_absolute tells the drone to rotate clockwise. 
-        Pass in an int which represents degrees to rotate """        
 
-        log.info("rotate cw(val=%d)" % val)
-        packet = Packet(cmd=f"cw {str(val)}")
+    def rotate_cw_absolute(self, val):
+        """Rotate clockwise by an absolute angle.
+        Pass in an int which represents degrees to rotate."""
+        log.info('rotate cw absolute(val=%d)' % val)
+        packet = Packet(cmd='cw %d' % val)
         self.send_packet(packet)
 
     def rotate_ccw_absolute(self, val):
-        """rotate_ccw_absolute tells the drone to rotate counter_clockwise. 
-        Pass in an int which represents degrees to rotate """        
-        log.info("rotate ccw(val=%d)" % val)
-        packet = Packet(cmd=f"ccw {str(val)}")
-
+        """Rotate counter-clockwise by an absolute angle.
+        Pass in an int which represents degrees to rotate."""
+        log.info('rotate ccw absolute(val=%d)' % val)
+        packet = Packet(cmd='ccw %d' % val)
         self.send_packet(packet)
 
     def up(self, val):
