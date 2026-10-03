@@ -1,0 +1,47 @@
+"""ResponseLagEstimator: what sampling at 20 Hz does, why a pulse is skipped, which log."""
+import unittest
+
+from tellopy import GyroContainer, Logger, ResponseLagEstimator, StickContainer, TickClock
+from tellopy._internal.tello import log as library_log
+
+from tests.support import lags
+from tests.support.synthetic import Flight, YAW_PULSES, yaw_estimator
+
+
+class ResponseLagEstimatorDetailTest(unittest.TestCase):
+
+    PULSES = YAW_PULSES
+
+    def estimate(self, flight, command_shift=0.0, **options):
+        return yaw_estimator(flight, command_shift, **options)
+
+    def test_at_the_real_gyro_rate_the_early_crossing_reads_low(self):
+        # With a reading every 50 ms, the straight line drawn between the two
+        # readings around 10% of the peak runs ahead of the real, curved
+        # start of the response: 'onset' reads ~18 ms early. The 50% crossing
+        # is much less affected, so 'midpoint' is the one to trust in absolute
+        # terms; both still move one for one with the real lag (see below).
+        flight = Flight(self.PULSES, gyro_rate=20.0)
+        estimator = self.estimate(flight)
+        onset, midpoint = flight.expected()
+        self.assertEqual(len(estimator), len(self.PULSES), dict(estimator._skipped))
+        self.assertAlmostEqual(lags.median(estimator, 'midpoint') - midpoint, 0.005, delta=0.008)
+        self.assertAlmostEqual(lags.median(estimator, 'onset') - onset, -0.018, delta=0.008)
+
+    def test_it_logs_to_the_librarys_own_log_unless_given_one(self):
+        sticks, gyros = StickContainer(), GyroContainer()
+        self.assertIs(ResponseLagEstimator(sticks, gyros, TickClock(gyros))._log, library_log)
+        mine = Logger('mine')
+        self.assertIs(ResponseLagEstimator(sticks, gyros, TickClock(gyros), log=mine)._log, mine)
+
+    def test_a_gap_where_the_response_begins_is_the_reason_for_a_skip(self):
+        estimator = self.estimate(Flight(self.PULSES, lost=[(11.02, 11.22)]))
+        self.assertEqual(dict(estimator._skipped), {'gap in the data': 1})
+
+    def test_a_pulse_with_no_response_is_skipped_for_want_of_one(self):
+        estimator = self.estimate(Flight(self.PULSES, respond=False))
+        self.assertEqual(dict(estimator._skipped), {'no clear response': len(self.PULSES)})
+
+    def test_a_command_that_changes_before_it_is_judged_is_the_reason_for_a_skip(self):
+        estimator = self.estimate(Flight([(4.0, 4.8, 0.5), (4.9, 6.0, 0.5), (12.0, 13.2, 0.5)]))
+        self.assertEqual(estimator._skipped['command changed'], 1)

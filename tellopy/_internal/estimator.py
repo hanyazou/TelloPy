@@ -1,0 +1,601 @@
+"""Estimates built from other Containers' Samples.
+
+An Estimator is itself a Container: what it works out comes out as Samples
+of its own, which can be looked at, or listened to, exactly like the
+Samples of a Container that is filled straight from the drone. It has no
+drone events of its own; it listens to the Containers it is given.
+"""
+import collections
+import copy
+import math
+import statistics
+
+from .container import Container
+from .protocol import LogGyro
+from .sample import Sample
+
+
+class Estimator(Container):
+    """A Container whose Samples are derived from those of other Containers.
+
+    A subclass calls _listen(container, handler) for each input; handler is
+    then called with every Sample that container adds.
+    """
+    EVENTS = ()
+
+    def __init__(self, max_age=10.0, max_count=None, log=None, name=None):
+        super(Estimator, self).__init__(None, max_age, max_count, log, name)
+        self._listening = []
+
+    def _listen(self, container, handler):
+        container.subscribe(handler)
+        self._listening.append((container, handler))
+
+    def close(self):
+        for container, handler in self._listening:
+            container.unsubscribe(handler)
+        self._listening = []
+        super(Estimator, self).close()
+
+
+def _tick_difference(tick, reference):
+    """How many ticks tick is ahead of reference. The counter is 32 bits and wraps,
+    so this is the nearer way round: a little behind, not a whole lap ahead."""
+    delta = (tick - reference) & 0xffffffff
+    return delta - 0x100000000 if delta >= 0x80000000 else delta
+
+
+class ClockSample(Sample):
+    """What a TickClock knows about how its counter's ticks map to host time.
+
+    The clock publishes one for every packet it takes in, whatever it knows at
+    that point, so the newest one is the clock's present estimate. tick and
+    recv_time are those of the newest packet the estimate rests on, and
+    event_time is that packet's recv_time: how recent the data behind the estimate
+    is. A packet left out of the estimate changes nothing but rejected. rejected and
+    resets are the clock's running totals of packets left out of the estimate and of
+    times it started over.
+
+    n is how many packets the estimate rests on. 0 means there is no estimate --
+    the clock is starting up, or has started over -- and then the fields below
+    are None, and tick, recv_time and event_time are those of the packet that came.
+    Otherwise: when the counter read `tick`, host time was
+    host_at_tick, give or take host_at_tick_std seconds; the counter runs at freq
+    ticks per second, give or take freq_std. Those are how far the estimate can be
+    trusted, not the scatter of the packets' arrival, which is residual_std (also
+    seconds). The host time of another tick is
+    host_at_tick + (that tick - tick) / freq, with an uncertainty that grows with
+    the distance from `tick` at the rate freq_std says.
+    """
+    def __init__(self, tick, recv_time, n=0, host_at_tick=None, freq=None,
+                 host_at_tick_std=None, freq_std=None, residual_std=None, rejected=0, resets=0):
+        super(ClockSample, self).__init__(event_time=recv_time, tick=tick, recv_time=recv_time)
+        self.n = n
+        self.host_at_tick = host_at_tick
+        self.freq = freq
+        self.host_at_tick_std = host_at_tick_std
+        self.freq_std = freq_std
+        self.residual_std = residual_std
+        self.rejected = rejected
+        self.resets = resets
+
+
+class TickClock(Estimator):
+    """Works out how a device's tick counter maps to host time, from the packets that carry the ticks.
+
+    It is given Containers of Samples that have a tick and a recv_time (in flight,
+    the IMU's) and publishes a ClockSample for every packet it takes in; the newest
+    is its present estimate. What a ClockSample says, and how far it can be trusted,
+    is defined there.
+
+    The estimate is on the recv_time clock: it takes the jitter of the packets'
+    arrival out of the time of a tick, but the constant part of their delay (the
+    least time a packet takes) stays in it, as it cannot be known from the packets alone.
+
+    It copes with what a drone does. The counter is 32 bits and wraps every ~30
+    minutes. A packet carries several records, all with the one arrival time; only
+    the freshest record of a packet counts, whichever Containers it came from. The
+    first records after connecting can be stale, from just after the drone booted, and
+    are left out. A packet that arrives late is left out, and changes nothing in the
+    estimate but the count of those left out. If the arrival times jump, the clock
+    starts over. The ClockSamples say what happened (n, rejected, resets).
+
+    window is how many seconds of packets the estimate is made from. Before enough
+    packets agree with each other and with `nominal_freq`, the counter's known rate in
+    ticks per second, to within `warmup_tolerance` seconds, there is no estimate (n is 0):
+    `provisional_samples` of them give a rough one, which takes the rate to be
+    the nominal one give or take `nominal_freq_error` (a fraction), and `min_samples` a
+    line whose rate is measured. reject_sigmas and reject_floor say how far from the
+    estimate a packet must be to be left out, and max_consecutive_rejects how many in a
+    row make the clock start over.
+    """
+    # How it works: the line host_time = a + b * tick is fitted to the (tick, recv_time)
+    # points of the window by least squares, from running sums that are updated as points
+    # enter and leave, so a packet costs the same however long the window is; the origin
+    # of the points is moved near the newest now and then (_RECENTER_TICKS) so that the
+    # numbers stay small. Samples that share a recv_time are taken to be from one packet,
+    # and the newest packet is held back until the next arrives, to see which of its
+    # records is the freshest. To start up, each candidate implies when the counter read
+    # zero, if it ran at the nominal rate; real ones agree on that, a stale one is off by
+    # however stale it is.
+    SAMPLE = ClockSample
+    _RECENTER_TICKS = 2e8       # how far the origin may lag behind the newest tick, for the numbers' sake
+
+    def __init__(self, *inputs, window=60.0, min_samples=30, reject_sigmas=5.0,
+                 reject_floor=0.005, max_consecutive_rejects=20,
+                 nominal_freq=2344062.0, warmup_tolerance=0.5, log=None,
+                 provisional_samples=5, nominal_freq_error=3e-4, name=None):
+        super(TickClock, self).__init__(max_age=10.0, log=log, name=name)
+        self._nominal_freq = nominal_freq
+        self._nominal_freq_error = nominal_freq_error
+        self._warmup_tolerance = warmup_tolerance
+        self._provisional_samples = provisional_samples
+        self._candidates = []       # (unwrapped tick, recv_time) while starting up
+        self._provisional = None    # (offset, n, sigma, centre, newest) of the rough estimate, once there is one
+        self._started = False
+        self._window = window
+        self._min_samples = min_samples
+        self._reject_sigmas = reject_sigmas
+        self._reject_floor = reject_floor
+        self._max_consecutive_rejects = max_consecutive_rejects
+        self._rejected = 0          # left out of the fit as outliers, in total
+        self._resets = 0            # times the window was thrown away
+        self._consecutive_rejects = 0
+        self._last_tick = None      # the newest tick, and where it stands unwrapped
+        self._last_unwrapped = None
+        self._x0 = self._y0 = None  # origin of the points, kept near the newest one for precision
+        self._just_started = False
+        self._packet = None         # (unwrapped tick, recv_time, tick) of the freshest Sample of the newest packet
+        self._points = collections.deque()
+        self._sums = [0.0] * 5      # sum of x, y, x*x, x*y, y*y
+        for container in inputs:
+            self._listen(container, self._on_input)
+
+    # -- taking Samples in -------------------------------------------------
+
+    def _on_input(self, sample):
+        if sample.tick is None or sample.recv_time is None:
+            return
+        with self._lock:
+            unwrapped = self._unwrap(sample.tick, commit=True)
+            reading = self._packet          # the freshest Sample so far of the packet being read
+            if reading is not None and reading[1] == sample.recv_time:
+                if reading[0] < unwrapped:
+                    self._packet = (unwrapped, sample.recv_time, sample.tick)
+                return
+            self._packet = (unwrapped, sample.recv_time, sample.tick)
+            if reading is None:
+                return
+            clock_sample = self._take(*reading)
+        self.add(clock_sample)
+
+    def _take(self, unwrapped, recv_time, tick):
+        """Fit one packet's freshest tick; the ClockSample that says what the clock now knows."""
+        if not self._started and not self._start(unwrapped, recv_time):
+            return self._clock_sample(unwrapped, recv_time, tick)
+        x, y = unwrapped - self._x0, recv_time - self._y0
+        fit = self._fit()
+        if fit is not None and self._min_samples <= len(self._points) and not self._just_started:
+            slope, intercept, std = fit
+            if abs(y - (intercept + slope * x)) > self._reject_sigmas * max(std, self._reject_floor):
+                self._rejected += 1
+                self._consecutive_rejects += 1
+                if self._consecutive_rejects >= self._max_consecutive_rejects:
+                    self._reset(unwrapped, recv_time)
+                return self._clock_sample(unwrapped, recv_time, tick)
+        if not self._just_started:
+            self._push(x, y)
+        self._just_started = False
+        self._consecutive_rejects = 0
+        while self._window < y - self._points[0][1]:
+            self._pop()
+        if self._RECENTER_TICKS < x:
+            self._recenter(x, y)
+        return self._clock_sample(unwrapped, recv_time, tick)
+
+    def _clock_sample(self, unwrapped, recv_time, tick):
+        """What the clock knows now, at the newest packet it rests on; if it knows nothing, at this one."""
+        totals = dict(rejected=self._rejected, resets=self._resets)
+        fit = self._fit() if self._started and self._min_samples <= len(self._points) else None
+        if fit is not None:
+            slope, intercept, std = fit
+            n = len(self._points)
+            sx, _, sxx, _, _ = self._sums
+            spread = sxx - sx * sx / n              # how widely the points are spread over ticks
+            x, y = self._points[-1]                 # the newest packet in the fit
+            freq = 1.0 / slope
+            return ClockSample(int(self._x0 + x) & 0xffffffff, self._y0 + y, n=n,
+                               host_at_tick=self._y0 + intercept + slope * x, freq=freq,
+                               host_at_tick_std=std * math.sqrt(1.0 / n + (x - sx / n) ** 2 / spread),
+                               freq_std=freq * freq * std / math.sqrt(spread), residual_std=std, **totals)
+        if self._provisional is not None:
+            offset, n, sigma, centre, (newest, newest_recv_time) = self._provisional
+            drift = abs(newest - centre) / self._nominal_freq * self._nominal_freq_error
+            return ClockSample(int(newest) & 0xffffffff, newest_recv_time, n=n,
+                               host_at_tick=offset + newest / self._nominal_freq,
+                               freq=self._nominal_freq, host_at_tick_std=math.sqrt(sigma * sigma / n + drift * drift),
+                               freq_std=self._nominal_freq * self._nominal_freq_error, residual_std=sigma, **totals)
+        return ClockSample(tick, recv_time, **totals)
+
+    # -- the fit -----------------------------------------------------------
+
+    def _unwrap(self, tick, commit):
+        if self._last_tick is None:
+            unwrapped = tick
+        else:
+            unwrapped = self._last_unwrapped + _tick_difference(tick, self._last_tick)
+        if commit:
+            self._last_tick, self._last_unwrapped = tick, unwrapped
+        return unwrapped
+
+    def _push(self, x, y):
+        self._points.append((x, y))
+        for i, term in enumerate((x, y, x * x, x * y, y * y)):
+            self._sums[i] += term
+
+    def _pop(self):
+        x, y = self._points.popleft()
+        for i, term in enumerate((x, y, x * x, x * y, y * y)):
+            self._sums[i] -= term
+
+    def _reset(self, unwrapped, recv_time):
+        self._resets += 1
+        self._points.clear()
+        self._sums = [0.0] * 5
+        self._started = False
+        self._provisional = None
+        self._candidates = [(unwrapped, recv_time)]
+        self._consecutive_rejects = 0
+
+    def _start(self, unwrapped, recv_time):
+        """Take a candidate; True once enough of them agree that the clock has started.
+
+        Before that, keeps the rough estimate up to date once a few of them agree.
+        """
+        self._candidates.append((unwrapped, recv_time))
+        if len(self._candidates) < self._provisional_samples:
+            return False
+        # each candidate implies when the counter read zero, if it ran at its nominal rate;
+        # the real ones agree on that, a stale one is off by however stale it is
+        implied = [y - x / self._nominal_freq for x, y in self._candidates]
+        middle = statistics.median(implied)
+        agreeing = [(c, i) for c, i in zip(self._candidates, implied) if abs(i - middle) <= self._warmup_tolerance]
+        if len(agreeing) < self._provisional_samples:
+            self._provisional = None
+            del self._candidates[:-4 * self._min_samples]    # keep looking, but not for ever
+            return False
+        if len(agreeing) < self._min_samples:
+            self._provisional = self._rough_estimate(agreeing)
+            return False
+        self._provisional = None
+        self._x0, self._y0 = agreeing[0][0]
+        for (x, y), _ in agreeing:
+            self._push(x - self._x0, y - self._y0)
+        self._candidates = []
+        self._started = True
+        self._just_started = True
+        return True
+
+    def _rough_estimate(self, agreeing):
+        """(offset, n, sigma, centre, newest) from a few candidates that agree: when the counter
+        read zero, if it ran at its nominal rate; how many; their scatter; the tick they centre on;
+        and the newest of them, (unwrapped tick, recv_time)."""
+        for _ in range(2):      # twice: leave out those far from the rest, and take the scatter again
+            offsets = [i for _, i in agreeing]
+            mean = statistics.mean(offsets)
+            sigma = max(statistics.stdev(offsets), self._reject_floor)
+            near = [(c, i) for c, i in agreeing if abs(i - mean) <= 4 * sigma]
+            if len(near) < self._provisional_samples:
+                break
+            agreeing = near
+        offsets = [i for _, i in agreeing]
+        return (statistics.mean(offsets), len(agreeing),
+                max(statistics.stdev(offsets), self._reject_floor),
+                statistics.mean(c[0] for c, _ in agreeing), agreeing[-1][0])
+
+    def _recenter(self, dx, dy):
+        """Move the origin to the newest point, so numbers stay small however long this runs."""
+        points = [(x - dx, y - dy) for x, y in self._points]
+        self._x0 += dx
+        self._y0 += dy
+        self._points.clear()
+        self._sums = [0.0] * 5
+        for x, y in points:
+            self._push(x, y)
+
+    def _fit(self):
+        """(slope, intercept, residual std) of the least squares line, or None."""
+        n = len(self._points)
+        if n < 2:
+            return None
+        sx, sy, sxx, sxy, syy = self._sums
+        denominator = n * sxx - sx * sx
+        if denominator <= 0:
+            return None
+        slope = (n * sxy - sx * sy) / denominator
+        intercept = (sy - slope * sx) / n
+        squares = syy - intercept * sy - slope * sxy
+        return slope, intercept, math.sqrt(max(squares, 0.0) / (n - 2)) if 2 < n else 0.0
+
+
+class Retimer(Estimator):
+    """Republishes the Samples of a Container with a better event_time, worked out from their tick.
+
+    A raw Sample's event_time is its recv_time, which jitters with the delay of the
+    packet that carried it. A Retimer takes `source`, a Container of Samples that
+    have a tick, and `clock`, a Container of a TickClock's ClockSamples. For every
+    Sample of `source` it publishes a copy of the same class, with event_time the
+    host time of its tick and event_time_std how far that can be trusted, in seconds.
+    Everything else is as it was, and the Sample that came in is not changed.
+
+    Every Sample is republished. One that can't be retimed goes out as it came, with
+    event_time_std None, so event_time_std says whether a Sample was retimed. That is
+    so when the clock has no estimate at the moment, when the estimate does not fit the
+    Sample -- its time comes out more than `max_shift` seconds from when the Sample
+    arrived, which a measurement cannot be -- and when the Sample has no tick or no
+    recv_time. The last is a mistake in what the Retimer was given, and is logged as
+    an error, once.
+
+    `clock` must be filled from raw Containers, not from `source` or anything a
+    Retimer made. Left out, the name of a Retimer says whose Samples it republishes:
+    Retimer(<the name of source>).
+    """
+    def __init__(self, source, clock, max_shift=0.5, max_age=10.0, max_count=None, log=None, name=None):
+        if name is None:
+            name = 'Retimer(%s)' % source.name
+        super(Retimer, self).__init__(max_age, max_count, log, name)
+        self.SAMPLE = source.SAMPLE
+        self._max_shift = max_shift
+        self._clock_sample = None       # the newest the clock has published
+        self._complained = False
+        self._listen(clock, self._on_clock)
+        self._listen(source, self._on_source)
+
+    def _on_clock(self, clock_sample):
+        self._clock_sample = clock_sample
+
+    def _on_source(self, sample):
+        self.add(self._retimed(sample))
+
+    def _retimed(self, sample):
+        if sample.tick is None or sample.recv_time is None:
+            if not self._complained:
+                self._complained = True
+                self._log.error('%s: %s has no tick or no recv_time, so it is passed on '
+                               'as it is (said once)' % (self.name, type(sample).__name__))
+            return sample
+        clock = self._clock_sample
+        if clock is None or clock.n == 0:
+            return sample
+        # the ClockSample's uncertainty at its own tick, and the rate's uncertainty times the
+        # distance from there, taken together
+        later = _tick_difference(sample.tick, clock.tick) / clock.freq      # seconds after the clock's tick
+        event_time = clock.host_at_tick + later
+        if self._max_shift < abs(event_time - sample.recv_time):
+            return sample
+        retimed = copy.copy(sample)
+        retimed.event_time = event_time
+        retimed.event_time_std = math.hypot(clock.host_at_tick_std, later * clock.freq_std / clock.freq)
+        return retimed
+
+
+class LagSample(Sample):
+    """How long a sensor took to respond to one stick command.
+
+    event_time is when the command it was measured from went out, the event the
+    estimate rests on; axis is which stick it was (yaw, roll, pitch). onset and
+    midpoint are the seconds from then until the sensor signal reached 10% and
+    50% of its peak response; peak (signed like the signal) and noise (its
+    scatter while still) say how clear that response was.
+
+    clock_std is how far the host times of the readings it was worked out from
+    can be trusted, in seconds: the worst of those from just before the command
+    to when the signal had settled. None if any of them was not put on the clock
+    for want of an estimate, and its arrival time was used.
+    """
+    def __init__(self, event_time, onset, midpoint, peak, noise, axis='yaw', clock_std=None):
+        super(LagSample, self).__init__(event_time=event_time)
+        self.onset = onset
+        self.midpoint = midpoint
+        self.peak = peak
+        self.noise = noise
+        self.axis = axis
+        self.clock_std = clock_std
+
+    def __str__(self):
+        return '%s at %.3f: onset %.0f ms, midpoint %.0f ms (peak %+.2f, noise %.3f)' % (
+            self.axis, self.event_time, self.onset * 1e3, self.midpoint * 1e3, self.peak, self.noise)
+
+
+def _tilt_angle(imu, axis):
+    """The roll or pitch angle (radians) of a LogImuAtti, from its quaternion (w, x, y, z)."""
+    w, x, y, z = imu.q0, imu.q1, imu.q2, imu.q3
+    if axis == 'roll':
+        return math.atan2(2 * (w * x + y * z), 1 - 2 * (x * x + y * y))
+    return math.asin(max(-1.0, min(1.0, 2 * (w * y - z * x))))
+
+
+def _percentile(values, p):
+    ordered = sorted(values)
+    position = (len(ordered) - 1) * p / 100.0
+    lower = int(position)
+    upper = min(lower + 1, len(ordered) - 1)
+    return ordered[lower] + (ordered[upper] - ordered[lower]) * (position - lower)
+
+
+class _Pulse(object):
+    def __init__(self, command_time, command):
+        self.command_time = command_time
+        self.command = command
+        self.release = None         # when the command went back to zero
+
+
+class ResponseLagEstimator(Estimator):
+    """How long after a stick command does the drone's response show in a sensor?
+
+    Watches the stick commands for one on `axis` that starts from rest --
+    the stick centred for at least `quiet` seconds before -- and a sensor
+    signal after it. Once the command is over (or `hold` seconds have passed)
+    and the signal has settled, it looks for when the signal rose to 10% and
+    to 50% of its peak, and reports the times since the command went out as a LagSample.
+    A pulse that doesn't give a clear answer is skipped: no LagSample is
+    made for it. One reason is a gap in the gyro's readings (packets do
+    get lost) longer than `max_gap` at the moment of the response, since
+    a line drawn across a gap says nothing about when the response began.
+
+    sticks and source are Containers, clock a TickClock: the source's Samples
+    are put on the host clock by the newest ClockSample it has published, the
+    command's are already on it. While there is none with an estimate, a Sample's
+    arrival time stands in for its time, and the LagSample says so (clock_std). What
+    signal is watched depends on the axis, unless `signal` (a function of one
+    Sample, giving a number) says otherwise:
+
+      yaw     the yaw rate: a LogGyro's `stage` (of its three) or a LogImuAtti's gyro
+      roll    the roll angle, from a LogImuAtti's quaternion
+      pitch   the pitch angle, likewise
+
+    The angles answer more slowly than the rate: the 50% point comes some 260-300 ms
+    after the command, against about 100 ms for the yaw rate. There is no default
+    for throttle; none of the signals tried follows it cleanly.
+
+    What comes out is the lag of that signal behind the command: the drone's
+    response and the time the reading takes to reach us together, with the
+    command's own trip in front.
+    """
+    SAMPLE = LagSample
+    # the least peak (rad/s for yaw, rad for the angles) that counts as a response
+    _MIN_PEAK = {'yaw': 0.2, 'roll': 0.03, 'pitch': 0.03}
+
+    def __init__(self, sticks, source, clock, axis='yaw', stage=0, signal=None, quiet=1.0,
+                 command_threshold=0.15, release_threshold=0.05, hold=3.0, settle=0.3,
+                 min_peak=None, min_snr=6.0, max_lag=0.8, max_gap=0.15, log=None, name=None):
+        super(ResponseLagEstimator, self).__init__(max_age=600.0, log=log, name=name)
+        if signal is None and axis not in self._MIN_PEAK:
+            raise ValueError('no default signal for the %s axis; pass signal=' % axis)
+        self._axis = axis
+        self._signal = signal or self._default_signal
+        if min_peak is None:
+            min_peak = self._MIN_PEAK.get(axis, 0.0)
+        self._stage = stage
+        self._quiet = quiet
+        self._command_threshold = command_threshold
+        self._release_threshold = release_threshold
+        self._hold = hold
+        self._settle = settle
+        self._min_peak = min_peak
+        self._min_snr = min_snr
+        self._max_lag = max_lag
+        self._max_gap = max_gap
+        self._skipped = collections.Counter()
+        self._gyro = collections.deque()        # (host time, the signal's value, clock_std)
+        self._clock_sample = None               # the newest the clock has published
+        self._pulse = None
+        self._quiet_since = None
+        self._listen(clock, self._on_clock)
+        self._listen(sticks, self._on_stick)
+        self._listen(source, self._on_source)
+
+    def _default_signal(self, sample):
+        if self._axis == 'yaw':
+            return sample.stages[self._stage][2] if isinstance(sample, LogGyro) else sample.gyro_z
+        return _tilt_angle(sample, self._axis)
+
+    # -- what it says ------------------------------------------------------
+
+    # -- taking Samples in -------------------------------------------------
+
+    def _on_stick(self, sample):
+        yaw, t = getattr(sample, self._axis), sample.event_time
+        with self._lock:
+            pulse = self._pulse
+            if pulse is None:
+                if abs(yaw) < self._release_threshold:
+                    if self._quiet_since is None:
+                        self._quiet_since = t
+                elif (self._command_threshold <= abs(yaw) and self._quiet_since is not None
+                        and self._quiet <= t - self._quiet_since):
+                    self._pulse = _Pulse(t, yaw)
+                    self._quiet_since = None
+                else:
+                    self._quiet_since = None        # moving, but not a clean start: wait for rest again
+            elif abs(yaw) < self._release_threshold:
+                if pulse.release is None:
+                    pulse.release = t
+                    self._quiet_since = t
+            elif pulse.release is not None or 0.1 < abs(yaw - pulse.command):
+                self._skipped['command changed'] += 1       # the command moved on before this one could be judged
+                self._pulse = None
+                self._quiet_since = None
+
+    def _on_clock(self, clock_sample):
+        self._clock_sample = clock_sample
+
+    def _on_source(self, sample):
+        clock = self._clock_sample
+        if clock is None or clock.n == 0 or sample.tick is None:
+            t, clock_std = sample.event_time, None      # not on the clock: when it arrived
+        else:
+            later = _tick_difference(sample.tick, clock.tick) / clock.freq      # seconds after the clock's tick
+            t = clock.host_at_tick + later
+            clock_std = math.hypot(clock.host_at_tick_std, later * clock.freq_std / clock.freq)
+        rate = self._signal(sample)
+        lag_sample = None
+        with self._lock:
+            self._gyro.append((t, rate, clock_std))
+            while 10.0 < t - self._gyro[0][0]:
+                self._gyro.popleft()
+            pulse = self._pulse
+            if pulse is not None:
+                end = pulse.release if pulse.release is not None else pulse.command_time + self._hold
+                if end + self._settle <= t:
+                    self._pulse = None
+                    lag_sample = self._judge(pulse, end)
+        if lag_sample is not None:
+            self.add(lag_sample)
+
+    # -- judging one pulse -------------------------------------------------
+
+    def _judge(self, pulse, end):
+        t_cmd = pulse.command_time
+        gyro = sorted(self._gyro, key=lambda reading: reading[0])       # by time: packets can arrive out of order
+        rest = [rate for t, rate, _ in gyro if t_cmd - 0.8 <= t <= t_cmd - 0.1]
+        if len(rest) < 3:
+            return self._skip('no signal before the command')
+        base = statistics.median(rest)
+        noise = 1.4826 * statistics.median(abs(rate - base) for rate in rest)
+        response = [(t, rate - base) for t, rate, _ in gyro if t_cmd - 0.3 <= t <= end + self._settle]
+        during = [(t, delta) for t, delta in response if t_cmd <= t]
+        if len(during) < 5:
+            return self._skip('too few readings')
+        sign = 1 if max(during, key=lambda point: abs(point[1]))[1] > 0 else -1
+        peak = _percentile([abs(delta) for _, delta in during], 85)
+        if peak < self._min_peak or peak < self._min_snr * noise:
+            return self._skip('no clear response')
+        lags = []
+        for fraction in (0.1, 0.5):
+            crossed = self._crossing(response, t_cmd, sign, fraction * peak)
+            if crossed is None:
+                return self._skip('no crossing')
+            when, spacing = crossed
+            if self._max_gap < spacing:
+                return self._skip('gap in the data')
+            lags.append(when - t_cmd)
+        if not all(-0.05 <= lag <= self._max_lag for lag in lags):
+            return self._skip('implausible lag')
+        stds = [std for t, _, std in gyro if t_cmd - 0.3 <= t <= end + self._settle]
+        clock_std = None if None in stds else max(stds)
+        return LagSample(t_cmd, lags[0], lags[1], sign * peak, noise, self._axis, clock_std)
+
+    def _skip(self, reason):
+        self._skipped[reason] += 1
+        return None
+
+    @staticmethod
+    def _crossing(response, t_cmd, sign, level):
+        """(when, how far apart the two readings it lies between are): when
+        sign*response first rises to level after the command, by linear interpolation."""
+        points = [(t, sign * delta) for t, delta in response if t <= t_cmd + 1.0]
+        for (t0, g0), (t1, g1) in zip(points, points[1:]):
+            if t_cmd - 0.05 <= t1 and g0 < level <= g1:
+                return t0 + (level - g0) / (g1 - g0) * (t1 - t0), t1 - t0
+        return None

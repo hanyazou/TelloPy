@@ -1,10 +1,15 @@
 import threading
 import socket
 import time
+try:
+    from time import monotonic
+except ImportError:  # Python 2 has no time.monotonic
+    from time import time as monotonic
 import datetime
 import struct
 import sys
 import os
+from collections import OrderedDict
 
 from . import crc
 from . import logger
@@ -15,6 +20,7 @@ from . import video_stream
 from . utils import *
 from . protocol import *
 from . import dispatcher
+from . sample import CommandSample, StickSample
 
 log = logger.Logger('Tello')
 
@@ -23,7 +29,7 @@ class Tello(object):
     EVENT_CONNECTED = event.Event('connected')
     EVENT_WIFI = event.Event('wifi')
     EVENT_LIGHT = event.Event('light')
-    EVENT_FLIGHT_DATA = event.Event('fligt_data')
+    EVENT_FLIGHT_DATA = event.Event('flight_data')
     EVENT_LOG_HEADER = event.Event('log_header')
     EVENT_LOG = EVENT_LOG_HEADER
     EVENT_LOG_RAWDATA = event.Event('log_rawdata')
@@ -34,6 +40,28 @@ class Tello(object):
     EVENT_VIDEO_DATA = event.Event('video data')
     EVENT_DISCONNECTED = event.Event('disconnected')
     EVENT_FILE_RECEIVED = event.Event('file received')
+    EVENT_CALIBRATION_STATUS = event.Event('calibration_status')
+    EVENT_SAMPLE_COMMAND_ACK = event.Event('sample_command_ack')
+    EVENT_SAMPLE_COMMAND_TIMEOUT = event.Event('sample_command_timeout')
+    # Each stick command as it goes out (data is a StickSample). It is never
+    # answered, so unlike the two above there is no ack/timeout to wait for.
+    EVENT_SAMPLE_STICK = event.Event('sample_stick')
+    # One per record in a log data message; data is the decoded LogRecord
+    # (a LogImuAtti for EVENT_SAMPLE_IMU, and so on).
+    EVENT_SAMPLE_IMU = event.Event('sample_imu')
+    EVENT_SAMPLE_GYRO = event.Event('sample_gyro')
+    EVENT_SAMPLE_TOF = event.Event('sample_tof')
+    EVENT_SAMPLE_MVO = event.Event('sample_mvo')
+    EVENT_SAMPLE_CONTROL = event.Event('sample_control')
+    # A record whose id has no decoder yet; data is a bare LogRecord.
+    EVENT_SAMPLE_RAW = event.Event('sample_raw')
+    __RECORD_EVENTS = {
+        LogImuAtti: EVENT_SAMPLE_IMU,
+        LogGyro: EVENT_SAMPLE_GYRO,
+        LogTof: EVENT_SAMPLE_TOF,
+        LogNewMvoFeedback: EVENT_SAMPLE_MVO,
+        LogControl: EVENT_SAMPLE_CONTROL,
+    }
     # internal events
     __EVENT_CONN_REQ = event.Event('conn_req')
     __EVENT_CONN_ACK = event.Event('conn_ack')
@@ -60,11 +88,18 @@ class Tello(object):
     LOG_DEBUG = logger.LOG_DEBUG
     LOG_ALL = logger.LOG_ALL
 
-    def __init__(self, port=9000):
+    def __init__(self, port=9000, video_port=6038, command_ack_timeout=1.5, name=None):
+        # command_ack_timeout is how long an outgoing command may wait for its
+        # matching response, in seconds, before we give up on it and evict it
+        # from __pending_sends. name says which drone this is, to whoever records
+        # several of them; left out, it is the name of the class.
+        self.__name = name if name is not None else type(self).__name__
         self.tello_addr = ('192.168.10.1', 8889)
         self.debug = False
         self.pkt_seq_num = 0x01e4
         self.port = port
+        self.__video_port = video_port
+        self.__command_ack_timeout = command_ack_timeout
         self.udpsize = 2000
         self.left_x = 0.0
         self.left_y = 0.0
@@ -73,6 +108,9 @@ class Tello(object):
         self.sock = None
         self.state = self.STATE_DISCONNECTED
         self.lock = threading.Lock()
+        self.__seq_num_lock = threading.Lock()
+        self.__pending_sends_lock = threading.Lock()
+        self.__pending_sends = OrderedDict()
         self.connected = threading.Event()
         self.video_enabled = False
         self.prev_video_data_time = None
@@ -95,6 +133,9 @@ class Tello(object):
         
         # File recieve state.
         self.file_recv = {}  # Map filenum -> protocol.DownloadedFile
+
+        # IMU calibration polling state; see start_calibration().
+        self.__calibration_active = False
 
         # Create a UDP socket
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -135,7 +176,7 @@ class Tello(object):
 
     def connect(self):
         """Connect is used to send the initial connection request to the drone."""
-        self.__publish(event=self.__EVENT_CONN_REQ)
+        self.__publish(event=self.__EVENT_CONN_REQ, recv_time=None)
 
     def wait_for_connection(self, timeout=None):
         """Wait_for_connection will block until the connection is established."""
@@ -150,12 +191,21 @@ class Tello(object):
         log.info('send connection request (cmd="%s%02x%02x")' % (str(buf[:-2]), port0, port1))
         return self.send_packet(Packet(buf))
 
+    @property
+    def name(self):
+        """Which drone this is, when there are several: the name it was given, or that of the class."""
+        return self.__name
+
     def subscribe(self, signal, handler):
         """Subscribe a event such as EVENT_CONNECTED, EVENT_FLIGHT_DATA, EVENT_VIDEO_FRAME and so on."""
         dispatcher.connect(handler, signal)
 
-    def __publish(self, event, data=None, **args):
-        args.update({'data': data})
+    def unsubscribe(self, signal, handler):
+        """Undo subscribe()."""
+        dispatcher.disconnect(handler, signal)
+
+    def __publish(self, event, *, recv_time, data=None, **args):
+        args.update({'data': data, 'recv_time': recv_time})
         if 'signal' in args:
             del args['signal']
         if 'sender' in args:
@@ -165,39 +215,19 @@ class Tello(object):
 
     def takeoff(self):
         """Takeoff tells the drones to liftoff and start flying."""
-        log.info('set altitude limit 30m')
-        pkt = Packet(SET_ALT_LIMIT_CMD)
-        pkt.add_byte(0x1e)  # 30m
-        pkt.add_byte(0x00)
-        self.send_packet(pkt)
-        log.info('takeoff (cmd=0x%02x seq=0x%04x)' % (TAKEOFF_CMD, self.pkt_seq_num))
-        pkt = Packet(TAKEOFF_CMD)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(TAKEOFF_CMD, 'takeoff')
 
     def throw_and_go(self):
         """Throw_and_go starts a throw and go sequence"""
-        log.info('throw_and_go (cmd=0x%02x seq=0x%04x)' % (THROW_AND_GO_CMD, self.pkt_seq_num))
-        pkt = Packet(THROW_AND_GO_CMD, 0x48)
-        pkt.add_byte(0x00)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(THROW_AND_GO_CMD, 'throw_and_go', payload=bytearray([0x00]), pkt_type=0x48)
 
     def land(self):
         """Land tells the drone to come in for landing."""
-        log.info('land (cmd=0x%02x seq=0x%04x)' % (LAND_CMD, self.pkt_seq_num))
-        pkt = Packet(LAND_CMD)
-        pkt.add_byte(0x00)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(LAND_CMD, 'land', payload=bytearray([0x00]))
 
     def palm_land(self):
         """Tells the drone to wait for a hand underneath it and then land."""
-        log.info('palmland (cmd=0x%02x seq=0x%04x)' % (PALM_LAND_CMD, self.pkt_seq_num))
-        pkt = Packet(PALM_LAND_CMD)
-        pkt.add_byte(0x00)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(PALM_LAND_CMD, 'palmland', payload=bytearray([0x00]))
     
     def emergency(self):
         """Stop all four motors instantly"""
@@ -210,93 +240,150 @@ class Tello(object):
     def quit(self):
         """Quit stops the internal threads."""
         log.info('quit')
-        self.__publish(event=self.__EVENT_QUIT_REQ)
+        self.__publish(event=self.__EVENT_QUIT_REQ, recv_time=None)
+        # The dispatcher is module-global, so without this the state machine
+        # would keep receiving every event of every later Tello as well.
+        dispatcher.disconnect(self.__state_machine)
 
     def get_alt_limit(self):
         ''' ... '''
-        self.log.debug('get altitude limit (cmd=0x%02x seq=0x%04x)' % (
-            ALT_LIMIT_MSG, self.pkt_seq_num))
-        pkt = Packet(ALT_LIMIT_MSG)
-        pkt.fixup()
-        return self.send_packet(pkt)
-        
+        self.log.debug('get altitude limit (cmd=0x%02x)' % ALT_LIMIT_MSG)
+        return self.__send_command(ALT_LIMIT_MSG, 'get_alt_limit', quiet=True)
+
     def set_alt_limit(self, limit):
-        self.log.info('set altitude limit=%s (cmd=0x%02x seq=0x%04x)' % (
-            int(limit), SET_ALT_LIMIT_CMD, self.pkt_seq_num))
-        pkt = Packet(SET_ALT_LIMIT_CMD)
-        pkt.add_byte(int(limit))
-        pkt.add_byte(0x00)
-        pkt.fixup()        
-        self.send_packet(pkt)
+        self.log.info('set altitude limit=%s (cmd=0x%02x)' % (int(limit), SET_ALT_LIMIT_CMD))
+        self.__send_command(SET_ALT_LIMIT_CMD, 'set_alt_limit', payload=bytearray([int(limit), 0x00]), quiet=True)
         self.get_alt_limit()
 
     def get_att_limit(self):
         ''' ... '''
-        self.log.debug('get attitude limit (cmd=0x%02x seq=0x%04x)' % (
-            ATT_LIMIT_MSG, self.pkt_seq_num))
-        pkt = Packet(ATT_LIMIT_MSG)
-        pkt.fixup()
-        return self.send_packet(pkt)
-        
+        self.log.debug('get attitude limit (cmd=0x%02x)' % ATT_LIMIT_MSG)
+        return self.__send_command(ATT_LIMIT_MSG, 'get_att_limit', quiet=True)
+
     def set_att_limit(self, limit):
-        self.log.info('set attitude limit=%s (cmd=0x%02x seq=0x%04x)' % (
-            int(limit), ATT_LIMIT_CMD, self.pkt_seq_num))
-        pkt = Packet(ATT_LIMIT_CMD)
-        pkt.add_byte(0x00)        
-        pkt.add_byte(0x00)
-        pkt.add_byte( int(float_to_hex(float(limit))[4:6], 16) ) # 'attitude limit' formatted in float of 4 bytes
-        pkt.add_byte(0x41)
-        pkt.fixup()
-        self.send_packet(pkt)
+        self.log.info('set attitude limit=%s (cmd=0x%02x)' % (int(limit), ATT_LIMIT_CMD))
+        # 'attitude limit' formatted in float of 4 bytes
+        payload = bytearray([0x00, 0x00, int(float_to_hex(float(limit))[4:6], 16), 0x41])
+        self.__send_command(ATT_LIMIT_CMD, 'set_att_limit', payload=payload, quiet=True)
         self.get_att_limit()
 
     def get_low_bat_threshold(self):
         ''' ... '''
-        self.log.debug('get low battery threshold (cmd=0x%02x seq=0x%04x)' % (
-            LOW_BAT_THRESHOLD_MSG, self.pkt_seq_num))
-        pkt = Packet(LOW_BAT_THRESHOLD_MSG)
-        pkt.fixup()
-        return self.send_packet(pkt)
-        
+        self.log.debug('get low battery threshold (cmd=0x%02x)' % LOW_BAT_THRESHOLD_MSG)
+        return self.__send_command(LOW_BAT_THRESHOLD_MSG, 'get_low_bat_threshold', quiet=True)
+
     def set_low_bat_threshold(self, threshold):
-        self.log.info('set low battery threshold=%s (cmd=0x%02x seq=0x%04x)' % (
-            int(threshold), LOW_BAT_THRESHOLD_CMD, self.pkt_seq_num))
-        pkt = Packet(LOW_BAT_THRESHOLD_CMD)
-        pkt.add_byte(int(threshold))
-        pkt.fixup()        
-        self.send_packet(pkt)
+        self.log.info('set low battery threshold=%s (cmd=0x%02x)' % (int(threshold), LOW_BAT_THRESHOLD_CMD))
+        self.__send_command(LOW_BAT_THRESHOLD_CMD, 'set_low_bat_threshold', payload=bytearray([int(threshold)]), quiet=True)
         self.get_low_bat_threshold()
 
+    def get_ssid(self):
+        ''' Return the AP's current SSID.
+
+        Blocks the calling thread, retrying a few times if the drone
+        doesn't answer; raises error.TelloError if it never does. '''
+        sample = self.__send_recv_command(SSID_MSG, 'get_ssid', pkt_type=0x48)
+        return self.__decode_query_reply(sample.ack_payload)
+
+    def set_ssid(self, ssid):
+        ''' Set the AP's SSID.
+
+        Blocks the calling thread, retrying a few times if the drone
+        doesn't acknowledge; raises error.TelloError if it never does.
+        The change only takes effect once the drone is power-cycled --
+        get_ssid() (and the AP itself) keep reporting the old SSID until
+        then. '''
+        self.__send_recv_command(SSID_CMD, 'set_ssid', payload=bytearray(ssid.encode('ascii')))
+
+    def get_password(self):
+        ''' Return the AP's current password.
+
+        Same blocking/retry/failure behavior as get_ssid(). '''
+        sample = self.__send_recv_command(SSID_PASSWORD_MSG, 'get_password', pkt_type=0x48)
+        return self.__decode_query_reply(sample.ack_payload)
+
+    def set_password(self, password):
+        ''' Set the AP's password (WPA2-PSK).
+
+        Same blocking/retry/failure and power-cycle-to-take-effect
+        behavior as set_ssid(). Raises ValueError if password is longer
+        than 19 bytes as ASCII -- this library's own limit; whether the
+        drone itself accepts longer values is unconfirmed. '''
+        payload = bytearray(password.encode('ascii'))
+        if len(payload) > 19:
+            raise ValueError('password must be at most 19 bytes')
+        payload += bytearray(19 - len(payload))
+        self.__send_recv_command(SSID_PASSWORD_CMD, 'set_password', payload=payload)
+
+    def __decode_query_reply(self, ack_payload):
+        """Decode the status(1)+len(1)+ascii reply shape shared by
+        SSID_MSG and SSID_PASSWORD_MSG. The ascii text is sometimes
+        followed by extra zero-padding beyond the declared len (seen
+        after this library's own zero-padded set_password()); trimming
+        at the first NUL handles both that and the plain, unpadded shape
+        the drone uses for values it hasn't been touched by us."""
+        status = ack_payload[0]
+        if status != 0:
+            raise error.TelloError('query failed: status=%d' % status)
+        body = ack_payload[2:]
+        return body.split(b'\x00', 1)[0].decode('ascii')
+
+    def start_calibration(self):
+        """Start IMU calibration.
+
+        The drone must be presented with a series of distinct, held-still
+        orientations (belly down, each side down, nose down, nose up,
+        upside down -- any order is fine) for the calibration to complete;
+        see docs/calibration.md. This call only starts the sequence and
+        begins polling for status; subscribe to EVENT_CALIBRATION_STATUS
+        to follow progress. Polling stops automatically once the drone
+        reports completion (see protocol.CalibrationStatus.done).
+        """
+        self.__calibration_active = True
+        return self.__send_command(CALIBRATION_START_CMD, 'start_calibration', pkt_type=0x48, track=False)
+
+    def stop_calibration(self):
+        """Stop polling for calibration status.
+
+        This only stops this client from polling; it does not tell the
+        drone to cancel/abort an in-progress calibration (no such command
+        is known).
+        """
+        self.__calibration_active = False
+
+    @property
+    def calibration_active(self):
+        """True from start_calibration() until the drone reports the calibration done or stop_calibration()."""
+        return self.__calibration_active
+
+    def __send_calibration_poll(self):
+        self.__send_command(CALIBRATION_STATUS_CMD, 'calibration_poll', pkt_type=0x48, quiet=True, track=False)
+
     def __send_time_command(self):
-        log.info('send_time (cmd=0x%02x seq=0x%04x)' % (TIME_CMD, self.pkt_seq_num))
+        seq_num = self.__next_seq_num()
+        log.info('send_time (cmd=0x%02x seq=0x%04x)' % (TIME_CMD, seq_num))
         pkt = Packet(TIME_CMD, 0x50)
         pkt.add_byte(0)
         pkt.add_time()
-        pkt.fixup()
+        pkt.fixup(seq_num)
         return self.send_packet(pkt)
 
     def __send_start_video(self):
-        pkt = Packet(VIDEO_START_CMD, 0x60)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(VIDEO_START_CMD, 'start_video', pkt_type=0x60, quiet=True)
 
     def __send_video_mode(self, mode):
-        pkt = Packet(VIDEO_MODE_CMD)
-        pkt.add_byte(mode)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(VIDEO_MODE_CMD, 'set_video_mode', payload=bytearray([mode]), quiet=True)
 
     def set_video_mode(self, zoom=False):
         """Tell the drone whether to capture 960x720 4:3 video, or 1280x720 16:9 zoomed video.
         4:3 has a wider field of view (both vertically and horizontally), 16:9 is crisper."""
-        log.info('set video mode zoom=%s (cmd=0x%02x seq=0x%04x)' % (
-            zoom, VIDEO_START_CMD, self.pkt_seq_num))
+        log.info('set video mode zoom=%s (cmd=0x%02x)' % (zoom, VIDEO_START_CMD))
         self.zoom = zoom
         return self.__send_video_mode(int(zoom))
 
     def start_video(self):
         """Start_video tells the drone to send start info (SPS/PPS) for video stream."""
-        log.info('start video (cmd=0x%02x seq=0x%04x)' % (VIDEO_START_CMD, self.pkt_seq_num))
+        log.info('start video (cmd=0x%02x)' % VIDEO_START_CMD)
         self.video_enabled = True
         self.__send_exposure()
         self.__send_video_encoder_rate()
@@ -306,28 +393,21 @@ class Tello(object):
         """Set_exposure sets the drone camera exposure level. Valid levels are 0, 1, and 2."""
         if level < 0 or 2 < level:
             raise error.TelloError('Invalid exposure level')
-        log.info('set exposure (cmd=0x%02x seq=0x%04x)' % (EXPOSURE_CMD, self.pkt_seq_num))
+        log.info('set exposure (cmd=0x%02x)' % EXPOSURE_CMD)
         self.exposure = level
         return self.__send_exposure()
 
     def __send_exposure(self):
-        pkt = Packet(EXPOSURE_CMD, 0x48)
-        pkt.add_byte(self.exposure)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(EXPOSURE_CMD, 'set_exposure', payload=bytearray([self.exposure]), pkt_type=0x48, quiet=True)
 
     def set_video_encoder_rate(self, rate):
         """Set_video_encoder_rate sets the drone video encoder rate."""
-        log.info('set video encoder rate (cmd=0x%02x seq=%04x)' %
-                 (VIDEO_ENCODER_RATE_CMD, self.pkt_seq_num))
+        log.info('set video encoder rate (cmd=0x%02x)' % VIDEO_ENCODER_RATE_CMD)
         self.video_encoder_rate = rate
         return self.__send_video_encoder_rate()
 
     def __send_video_encoder_rate(self):
-        pkt = Packet(VIDEO_ENCODER_RATE_CMD, 0x68)
-        pkt.add_byte(self.video_encoder_rate)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(VIDEO_ENCODER_RATE_CMD, 'set_video_encoder_rate', payload=bytearray([self.video_encoder_rate]), quiet=True)
 
     def take_picture(self):
         log.info('take picture')
@@ -381,67 +461,35 @@ class Tello(object):
 
     def flip_forward(self):
         """flip_forward tells the drone to perform a forwards flip"""
-        log.info('flip_forward (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipFront)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(FLIP_CMD, 'flip_forward', payload=bytearray([FlipFront]), pkt_type=0x70)
 
     def flip_back(self):
         """flip_back tells the drone to perform a backwards flip"""
-        log.info('flip_back (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipBack)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(FLIP_CMD, 'flip_back', payload=bytearray([FlipBack]), pkt_type=0x70)
 
     def flip_right(self):
         """flip_right tells the drone to perform a right flip"""
-        log.info('flip_right (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipRight)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(FLIP_CMD, 'flip_right', payload=bytearray([FlipRight]), pkt_type=0x70)
 
     def flip_left(self):
         """flip_left tells the drone to perform a left flip"""
-        log.info('flip_left (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipLeft)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(FLIP_CMD, 'flip_left', payload=bytearray([FlipLeft]), pkt_type=0x70)
 
     def flip_forwardleft(self):
         """flip_forwardleft tells the drone to perform a forwards left flip"""
-        log.info('flip_forwardleft (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipForwardLeft)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(FLIP_CMD, 'flip_forwardleft', payload=bytearray([FlipForwardLeft]), pkt_type=0x70)
 
     def flip_backleft(self):
         """flip_backleft tells the drone to perform a backwards left flip"""
-        log.info('flip_backleft (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipBackLeft)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(FLIP_CMD, 'flip_backleft', payload=bytearray([FlipBackLeft]), pkt_type=0x70)
 
     def flip_forwardright(self):
         """flip_forwardright tells the drone to perform a forwards right flip"""
-        log.info('flip_forwardright (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipForwardRight)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(FLIP_CMD, 'flip_forwardright', payload=bytearray([FlipForwardRight]), pkt_type=0x70)
 
     def flip_backright(self):
         """flip_backleft tells the drone to perform a backwards right flip"""
-        log.info('flip_backright (cmd=0x%02x seq=0x%04x)' % (FLIP_CMD, self.pkt_seq_num))
-        pkt = Packet(FLIP_CMD, 0x70)
-        pkt.add_byte(FlipBackRight)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(FLIP_CMD, 'flip_backright', payload=bytearray([FlipBackRight]), pkt_type=0x70)
 
     def __fix_range(self, val, min=-1.0, max=1.0):
         if val < min:
@@ -503,11 +551,15 @@ class Tello(object):
     def __send_stick_command(self):
         pkt = Packet(STICK_CMD, 0x60)
 
-        axis1 = int(1024 + 660.0 * self.right_x) & 0x7ff
-        axis2 = int(1024 + 660.0 * self.right_y) & 0x7ff
-        axis3 = int(1024 + 660.0 * self.left_y) & 0x7ff
-        axis4 = int(1024 + 660.0 * self.left_x) & 0x7ff
-        axis5 = int(self.fast_mode) & 0x01        
+        # the sticks can be moved from another thread at any time; take one
+        # consistent look at them
+        right_x, right_y, left_y, left_x, fast_mode = (
+            self.right_x, self.right_y, self.left_y, self.left_x, self.fast_mode)
+        axis1 = int(1024 + 660.0 * right_x) & 0x7ff
+        axis2 = int(1024 + 660.0 * right_y) & 0x7ff
+        axis3 = int(1024 + 660.0 * left_y) & 0x7ff
+        axis4 = int(1024 + 660.0 * left_x) & 0x7ff
+        axis5 = int(fast_mode) & 0x01
         '''
         11 bits (-1024 ~ +1023) x 4 axis = 44 bits
         fast_mode takes 1 bit        
@@ -534,23 +586,216 @@ class Tello(object):
         pkt.add_byte(byte(packed_bytes[4]))
         pkt.add_byte(byte(packed_bytes[5]))
         pkt.add_time()
-        pkt.fixup()
+        pkt.fixup(self.__next_seq_num())
         log.debug("stick command: %s" % byte_to_hexstring(pkt.get_buffer()))
-        return self.send_packet(pkt)
+        if not self.send_packet(pkt):
+            return False
+        self.__publish(event=self.EVENT_SAMPLE_STICK, recv_time=None, data=StickSample(
+            pkt.timestamp, roll=right_x, pitch=right_y, throttle=left_y, yaw=left_x, fast_mode=fast_mode))
+        return True
 
     def __send_ack_log(self, id):
-        pkt = Packet(LOG_HEADER_MSG, 0x50)
-        pkt.add_byte(0x00)
         b0, b1 = le16(id)
-        pkt.add_byte(b0)
-        pkt.add_byte(b1)
-        pkt.fixup()
-        return self.send_packet(pkt)
+        return self.__send_command(LOG_HEADER_MSG, 'ack_log', payload=bytearray([0x00, b0, b1]), pkt_type=0x50, quiet=True, track=False)
+
+    def __next_seq_num(self):
+        """Return a fresh sequence number to embed in an outgoing packet.
+
+        Wraps at 16 bits since the wire field is 2 bytes. Callers pass the
+        result straight into Packet.fixup() so every packet we send carries
+        a distinct seq, which lets a later ack be matched back to the send
+        that caused it.
+
+        Never returns 0: Packet.fixup()'s own default is seq_num=0, so 0 is
+        reserved to mean "not assigned by this counter" (e.g. a packet built
+        and fixup()'d directly, outside of Tello). Keeping 0 exclusive to
+        that case lets ack-matching treat seq_num==0 as untracked, instead
+        of it colliding with a real value from this counter's wraparound.
+        """
+        with self.__seq_num_lock:
+            self.pkt_seq_num = (self.pkt_seq_num + 1) & 0xffff
+            if self.pkt_seq_num == 0:
+                self.pkt_seq_num = 1
+            return self.pkt_seq_num
+
+    def __send_command(self, cmd, name, payload=b'', pkt_type=0x68, quiet=False, track=True, on_response=None):
+        """Build, number, and send a simple one-shot command packet.
+
+        payload is the raw bytes to place after the header (equivalent to
+        a string of add_byte() calls). Set quiet=True when the caller
+        already logs something more specific itself (e.g. a value being
+        set, or because it's one of several sends behind one public call
+        such as start_video()), so we don't also log this generic
+        "name (cmd=... seq=...)" line on top of it.
+
+        track defaults to True: a CommandSample is recorded and, if/when
+        a matching response arrives, EVENT_SAMPLE_COMMAND_ACK fires (or
+        EVENT_SAMPLE_COMMAND_TIMEOUT if none ever does). Pass track=False for
+        commands that have their own separate response protocol and
+        shouldn't participate in this generic matching (e.g. the
+        calibration handshake, or us acking a received log header).
+
+        on_response, if given (only meaningful with track=True), is
+        called exactly once with the CommandSample once it settles --
+        either acked (sample.acked is True) or timed out (sample.acked
+        is False) -- in addition to and separately from the generic
+        EVENT_SAMPLE_COMMAND_ACK/_TIMEOUT events. It fires from whatever
+        thread notices the settling (typically the background recv
+        thread), after any internal lock this method or its callers hold
+        has been released, so it's safe to call back into
+        __send_command() (e.g. to retry) from within it.
+
+        (cmd, seq_num) is only a 16-bit key, so if the seq counter wraps
+        all the way around (65536 sends) while an old, still-unsettled
+        entry for the same cmd hasn't been evicted yet (only possible if
+        no packets at all arrived to drive eviction in the meantime),
+        this call's entry would otherwise silently overwrite it and
+        strand its on_response callback unfired. To keep "every
+        on_response fires exactly once" true even in that corner case,
+        a pre-existing entry found at the same key is settled as a
+        timeout (its own on_response, if any, is called) before being
+        replaced.
+        """
+        seq_num = self.__next_seq_num()
+        pkt = Packet(cmd, pkt_type, payload)
+        pkt.fixup(seq_num)
+        if not quiet:
+            log.info('%s (cmd=0x%02x seq=0x%04x)' % (name, cmd, seq_num))
+        if not track:
+            return self.send_packet(pkt)
+
+        with self.__pending_sends_lock:
+            if not self.send_packet(pkt):
+                return False
+            sample = CommandSample(cmd, seq_num, name, pkt.timestamp, pkt.get_data())
+            stale = self.__pending_sends.get((cmd, seq_num))
+            self.__pending_sends[(cmd, seq_num)] = (sample, on_response)
+        # Lock released above; only publish/call back with it released.
+
+        if stale is not None:
+            stale_sample, stale_on_response = stale
+            log.debug('command slot (cmd=0x%02x seq=0x%04x) reused before it settled: %s' %
+                      (cmd, seq_num, str(stale_sample)))
+            self.__publish(event=self.EVENT_SAMPLE_COMMAND_TIMEOUT, data=stale_sample, recv_time=monotonic())
+            if stale_on_response is not None:
+                stale_on_response(stale_sample)
+        return True
+
+    def __evict_stale_pending_sends(self, now):
+        """Drop and report any pending sends older than the command_ack_timeout.
+
+
+        Called from __match_command_response(), which runs on every
+        received packet regardless of cmd, so eviction happens on a
+        steady cadence -- driven by whatever's arriving anyway (e.g.
+        FLIGHT_MSG at ~10Hz) -- regardless of whether any tracked
+        command is currently in flight.
+        """
+        evicted = []
+        with self.__pending_sends_lock:
+            while self.__pending_sends:
+                _, (oldest, _) = next(iter(self.__pending_sends.items()))
+                if now - oldest.send_time <= self.__command_ack_timeout:
+                    break
+                _, entry = self.__pending_sends.popitem(last=False)
+                evicted.append(entry)
+        # Lock released above; only publish/call back with it released.
+        for sample, on_response in evicted:
+            log.debug('command timed out: %s' % str(sample))
+            self.__publish(event=self.EVENT_SAMPLE_COMMAND_TIMEOUT, data=sample, recv_time=now)
+            if on_response is not None:
+                on_response(sample)
+
+    def __match_command_response(self, cmd, seq_num, recv_time, ack_payload):
+        """Complete and publish the CommandSample for (cmd, seq_num), if any.
+
+        Called unconditionally for every received packet, regardless of
+        cmd -- a miss (the overwhelming majority of packets, e.g.
+        FLIGHT_MSG/LOG_DATA_MSG, whose cmd never appears as a key in
+        __pending_sends at all) just costs one dict lookup. This also
+        means eviction of stale pending sends piggybacks on whatever's
+        arriving anyway, on the same steady cadence, always before this
+        packet's own match is attempted -- so a response that arrives
+        late (e.g. after a multi-second Wi-Fi dropout) can't be matched
+        against an entry that should already have expired.
+
+        seq_num==0 is never matched: it means the packet wasn't numbered
+        by __next_seq_num() in the first place (e.g. built and fixup()'d
+        directly, outside of Tello), so there's nothing reliable to
+        match it against.
+        """
+        self.__evict_stale_pending_sends(recv_time)
+        if seq_num == 0:
+            return
+        with self.__pending_sends_lock:
+            entry = self.__pending_sends.pop((cmd, seq_num), None)
+        # Lock released above; only publish/call back with it released.
+        if entry is None:
+            return
+        sample, on_response = entry
+        sample._mark_acked(recv_time, ack_payload)
+        self.__publish(event=self.EVENT_SAMPLE_COMMAND_ACK, data=sample, recv_time=recv_time)
+        if on_response is not None:
+            on_response(sample)
+
+    def __send_recv_command(self, cmd, name, payload=b'', pkt_type=0x68, retries=3):
+        """Send a one-shot command and block until it's acked, retrying
+        on timeout up to `retries` attempts total.
+
+        Built directly on __send_command()'s on_response callback (not a
+        reimplementation of its internals), so it shares __send_command's
+        exact wire behavior and its (cmd, seq_num)-keyed ack/timeout
+        matching.
+
+        For on-demand calls (e.g. a CLI tool) where getting an answer
+        synchronously is more useful than handling
+        EVENT_SAMPLE_COMMAND_ACK/_TIMEOUT asynchronously -- it blocks the
+        calling thread for up to roughly retries * command_ack_timeout
+        seconds. Returns the completed (acked) CommandSample on success;
+        raises error.TelloError if every attempt times out. Not meant for
+        anything sent at a steady rate (e.g. stick commands), nor for
+        commands where a retry-induced duplicate send could be unsafe
+        (e.g. flight actions like takeoff/land/flip) unless that's been
+        separately confirmed safe.
+        """
+        done = threading.Event()
+        result = {}
+
+        def attempt(n):
+            def on_response(sample):
+                if sample.acked:
+                    result['sample'] = sample
+                    done.set()
+                elif n < retries:
+                    attempt(n + 1)
+                else:
+                    done.set()
+            self.__send_command(cmd, name, payload=payload, pkt_type=pkt_type, on_response=on_response)
+
+        attempt(1)
+        done.wait(retries * (self.__command_ack_timeout + 1.0))
+        if 'sample' not in result:
+            raise error.TelloError('%s: no response after %d attempts' % (name, retries))
+        return result['sample']
+
+    def __publish_log_records(self, recv_time):
+        """Publish one EVENT_SAMPLE_* for each record the last log data
+        message held.
+
+        EVENT_LOG_DATA fires once per message with a single LogData that
+        only remembers the latest record of each kind, so a subscriber
+        can't tell a fresh record from a repeat. These fire once per
+        record instead, in the order they appeared in the message.
+        """
+        for record in self.log_data.records:
+            event = self.__RECORD_EVENTS.get(type(record), self.EVENT_SAMPLE_RAW)
+            self.__publish(event=event, data=record, recv_time=recv_time)
 
     def send_packet(self, pkt):
         """Send_packet is used to send a command packet to the drone."""
         try:
             cmd = pkt.get_buffer()
+            pkt.timestamp = monotonic()
             self.sock.sendto(cmd, self.tello_addr)
             log.debug("send_packet: %s" % byte_to_hexstring(cmd))
         except socket.error as err:
@@ -564,10 +809,10 @@ class Tello(object):
 
     def send_packet_data(self, command, type=0x68, payload=[]):
         pkt = Packet(command, type, payload)
-        pkt.fixup()
+        pkt.fixup(self.__next_seq_num())
         return self.send_packet(pkt)
 
-    def __process_packet(self, data):
+    def __process_packet(self, data, recv_time):
         if isinstance(data, str):
             data = bytearray([x for x in data])
 
@@ -578,7 +823,7 @@ class Tello(object):
                 self.__send_exposure()
                 self.__send_video_encoder_rate()
                 self.__send_start_video()
-            self.__publish(self.__EVENT_CONN_ACK, data)
+            self.__publish(self.__EVENT_CONN_ACK, data=data, recv_time=recv_time)
 
             return True
 
@@ -590,52 +835,69 @@ class Tello(object):
 
         pkt = Packet(data)
         cmd = uint16(data[5], data[6])
+        self.__match_command_response(cmd, uint16(data[7], data[8]), recv_time, data[9:-2])
         if cmd == LOG_HEADER_MSG:
             id = uint16(data[9], data[10])
             log.info("recv: log_header: id=%04x, '%s'" % (id, str(data[28:54])))
             log.debug("recv: log_header: %s" % byte_to_hexstring(data[9:]))
             self.__send_ack_log(id)
-            self.__publish(event=self.EVENT_LOG_HEADER, data=data[9:])
+            self.__publish(event=self.EVENT_LOG_HEADER, data=data[9:], recv_time=recv_time)
             if self.log_data_file and not self.log_data_header_recorded:
                 self.log_data_file.write(data[12:-2])
                 self.log_data_header_recorded = True
         elif cmd == LOG_DATA_MSG:
             log.debug("recv: log_data: length=%d, %s" % (len(data[9:]), byte_to_hexstring(data[9:])))
-            self.__publish(event=self.EVENT_LOG_RAWDATA, data=data[9:])
+            self.__publish(event=self.EVENT_LOG_RAWDATA, data=data[9:], recv_time=recv_time)
             try:
-                self.log_data.update(data[10:])
+                self.log_data.update(data[10:], recv_time)
                 if self.log_data_file:
                     self.log_data_file.write(data[10:-2])
             except Exception as ex:
-                log.error('%s' % str(ex))
-            self.__publish(event=self.EVENT_LOG_DATA, data=self.log_data)
+                # A parse hiccup in this one log-data sub-stream (e.g. from
+                # UDP reordering/loss); recoverable and doesn't affect
+                # anything else, so this is informational, not an error.
+                log.info('%s' % str(ex))
+            self.__publish(event=self.EVENT_LOG_DATA, data=self.log_data, recv_time=self.log_data.recv_time)
+            self.__publish_log_records(recv_time)
 
         elif cmd == LOG_CONFIG_MSG:
             log.debug("recv: log_config: length=%d, %s" % (len(data[9:]), byte_to_hexstring(data[9:])))
-            self.__publish(event=self.EVENT_LOG_CONFIG, data=data[9:])
+            self.__publish(event=self.EVENT_LOG_CONFIG, data=data[9:], recv_time=recv_time)
         elif cmd == WIFI_MSG:
             log.debug("recv: wifi: %s" % byte_to_hexstring(data[9:]))
             self.wifi_strength = data[9]
-            self.__publish(event=self.EVENT_WIFI, data=data[9:])
+            self.__publish(event=self.EVENT_WIFI, data=data[9:], recv_time=recv_time)
         elif cmd == ALT_LIMIT_MSG:
             log.info("recv: altitude limit: %s" % byte_to_hexstring(data[9:-2]))
         elif cmd == ATT_LIMIT_MSG:
             log.info("recv: attitude limit: %s" % byte_to_hexstring(data[9:-2]))
         elif cmd == LOW_BAT_THRESHOLD_MSG:
             log.info("recv: low battery threshold: %s" % byte_to_hexstring(data[9:-2]))
+        elif cmd == SSID_MSG:
+            log.info("recv: ssid: %s" % byte_to_hexstring(data[9:-2]))
+        elif cmd == SSID_PASSWORD_MSG:
+            log.info("recv: password: %s" % byte_to_hexstring(data[9:-2]))
         elif cmd == LIGHT_MSG:
             log.debug("recv: light: %s" % byte_to_hexstring(data[9:-2]))
-            self.__publish(event=self.EVENT_LIGHT, data=data[9:])
+            self.__publish(event=self.EVENT_LIGHT, data=data[9:], recv_time=recv_time)
         elif cmd == FLIGHT_MSG:
-            flight_data = FlightData(data[9:])
+            flight_data = FlightData(recv_time, data[9:])
             flight_data.wifi_strength = self.wifi_strength
             log.debug("recv: flight data: %s" % str(flight_data))
-            self.__publish(event=self.EVENT_FLIGHT_DATA, data=flight_data)
+            self.__publish(event=self.EVENT_FLIGHT_DATA, data=flight_data, recv_time=recv_time)
         elif cmd == TIME_CMD:
             log.debug("recv: time data: %s" % byte_to_hexstring(data))
-            self.__publish(event=self.EVENT_TIME, data=data[7:9])
+            self.__publish(event=self.EVENT_TIME, data=data[7:9], recv_time=recv_time)
+        elif cmd == CALIBRATION_STATUS_CMD:
+            status = CalibrationStatus(data[9:-2])
+            log.debug("recv: calibration status: %s" % str(status))
+            self.__publish(event=self.EVENT_CALIBRATION_STATUS, data=status, recv_time=recv_time)
+            if status.done:
+                self.__calibration_active = False
+        elif cmd == CALIBRATION_START_CMD:
+            log.debug("recv: calibration start ack: %s" % byte_to_hexstring(data[9:-2]))
         elif cmd in (SET_ALT_LIMIT_CMD, ATT_LIMIT_CMD, LOW_BAT_THRESHOLD_CMD, TAKEOFF_CMD, LAND_CMD, VIDEO_START_CMD, VIDEO_ENCODER_RATE_CMD, PALM_LAND_CMD,
-                     EXPOSURE_CMD, THROW_AND_GO_CMD, EMERGENCY_CMD):
+                     EXPOSURE_CMD, THROW_AND_GO_CMD, EMERGENCY_CMD, SSID_CMD, SSID_PASSWORD_CMD):
             log.debug("recv: ack: cmd=0x%02x seq=0x%04x %s" %
                      (uint16(data[5], data[6]), uint16(data[7], data[8]), byte_to_hexstring(data)))
         elif cmd == TELLO_CMD_FILE_SIZE:
@@ -660,14 +922,14 @@ class Tello(object):
             # log.info("recv: file data: %s" % byte_to_hexstring(data[9:21]))
             # Drone is sending us a fragment of a file it told us to prepare
             # for earlier.
-            self.recv_file_data(pkt.get_data())
+            self.recv_file_data(pkt.get_data(), recv_time)
         else:
             log.info('unknown packet: %04x %s' % (cmd, byte_to_hexstring(data)))
             return False
 
         return True
 
-    def recv_file_data(self, data):
+    def recv_file_data(self, data, recv_time=None):
         (filenum,chunk,fragment,size) = struct.unpack('<HLLH', data[0:12])
         file = self.file_recv.get(filenum, None)
 
@@ -691,7 +953,7 @@ class Tello(object):
             self.send_packet_data(TELLO_CMD_FILE_COMPLETE, type=0x48,
                 payload=struct.pack('<HL', filenum, file.size))
             # Inform subscribers that we have a file and clean up.
-            self.__publish(event=self.EVENT_FILE_RECEIVED, data=file.data())
+            self.__publish(event=self.EVENT_FILE_RECEIVED, data=file.data(), recv_time=recv_time)
             del self.file_recv[filenum]
 
     def record_log_data(self, path = None):
@@ -761,15 +1023,18 @@ class Tello(object):
 
             if self.state == self.STATE_CONNECTED:
                 self.__send_stick_command()  # ignore errors
+                if self.__calibration_active:
+                    self.__send_calibration_poll()  # ignore errors
 
             try:
                 data, server = sock.recvfrom(self.udpsize)
+                recv_time = monotonic()
                 log.debug("recv: %s" % byte_to_hexstring(data))
-                self.__process_packet(data)
+                self.__process_packet(data, recv_time)
             except socket.timeout as ex:
                 if self.state == self.STATE_CONNECTED:
                     log.error('recv: timeout')
-                self.__publish(event=self.__EVENT_TIMEOUT)
+                self.__publish(event=self.__EVENT_TIMEOUT, recv_time=None)
             except Exception as ex:
                 log.error('recv: %s' % str(ex))
                 show_exception(ex)
@@ -780,8 +1045,7 @@ class Tello(object):
         log.info('start video thread')
         # Create a UDP socket
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        port = 6038
-        sock.bind(('', port))
+        sock.bind(('', self.__video_port))
         sock.settimeout(1.0)
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 512 * 1024)
         log.info('video receive buffer size = %d' %
@@ -796,6 +1060,7 @@ class Tello(object):
                 continue
             try:
                 data, server = sock.recvfrom(self.udpsize)
+                recv_time = monotonic()
                 now = datetime.datetime.now()
                 log.debug("video recv: %s %d bytes" % (byte_to_hexstring(data[0:2]), len(data)))
                 show_history = False
@@ -834,8 +1099,8 @@ class Tello(object):
                     history = history[-1:]
 
                 # deliver video frame to subscribers
-                self.__publish(event=self.EVENT_VIDEO_FRAME, data=data[2:])
-                self.__publish(event=self.EVENT_VIDEO_DATA, data=data)
+                self.__publish(event=self.EVENT_VIDEO_FRAME, data=data[2:], recv_time=recv_time)
+                self.__publish(event=self.EVENT_VIDEO_DATA, data=data, recv_time=recv_time)
 
                 # show video frame statistics
                 if self.prev_video_data_time is None:

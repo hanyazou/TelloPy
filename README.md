@@ -31,7 +31,6 @@ Help on package tellopy:
 ```
 
 ## Examples
-
 You can find basic usage of this package in example code in the examples folder.
 
 ### simple_takeoff
