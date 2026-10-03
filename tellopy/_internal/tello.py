@@ -228,6 +228,14 @@ class Tello(object):
     def palm_land(self):
         """Tells the drone to wait for a hand underneath it and then land."""
         return self.__send_command(PALM_LAND_CMD, 'palmland', payload=bytearray([0x00]))
+    
+    def emergency(self):
+        """Stop all four motors instantly"""
+        log.info('emergency')
+        pkt = Packet(EMERGENCY_CMD)
+        pkt.add_byte(0x00)
+        pkt.fixup()
+        return self.send_packet(pkt)
 
     def quit(self):
         """Quit stops the internal threads."""
