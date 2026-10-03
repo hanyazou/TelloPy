@@ -81,6 +81,31 @@ class EmergencyTest(DroneTestCase):
         self.assertEqual(received(), [b'emergency'])
 
 
+class AbsoluteMovementTest(DroneTestCase):
+
+    def test_each_command_sends_the_plain_text_sdk_command_with_its_value(self):
+        # Like emergency(), these are the SDK's plain-text commands, not
+        # the usual binary protocol -- checked the same way, via received_text.
+        drone = self.connect()
+        drone.up_absolute(50)
+        drone.down_absolute(50)
+        drone.forward_absolute(50)
+        drone.backward_absolute(50)
+        drone.right_absolute(50)
+        drone.left_absolute(50)
+        drone.clockwise_absolute(90)
+        drone.counter_clockwise_absolute(90)
+
+        def received():
+            with self.fake.lock:
+                return list(self.fake.received_text)
+        wait_until(lambda: len(received()) >= 8, what='all eight absolute movement commands')
+        self.assertEqual(received(), [
+            b'up 50', b'down 50', b'forward 50', b'back 50',
+            b'right 50', b'left 50', b'cw 90', b'ccw 90',
+        ])
+
+
 class VideoTest(DroneTestCase):
 
     def test_video_stream_delivers_the_bytes_sent(self):
