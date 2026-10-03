@@ -263,6 +263,7 @@ def main():
 
     drone = tellopy.Tello()
     drone.connect()
+    drone.wait_for_connection(60.0)
     drone.subscribe(drone.EVENT_FLIGHT_DATA, flightDataHandler)
     drone.subscribe(drone.EVENT_VIDEO_FRAME, videoRecorderHandler)
     drone.subscribe(drone.EVENT_FILE_RECEIVED, handleFileReceived)
