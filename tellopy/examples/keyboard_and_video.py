@@ -1,7 +1,7 @@
 """
 tellopy sample using keyboard and video player
 
-Requires mplayer to record/save video.
+Requires mencoder (part of mplayer) to record video.
 
 
 Controls:
@@ -26,19 +26,24 @@ import pygame.display
 import pygame.key
 import pygame.locals
 import pygame.font
+import pygame.surfarray
 import os
 import datetime
+import threading
+import traceback
+import queue
+import av
+import cv2
+import numpy
 from subprocess import Popen, PIPE
-# from tellopy import logger
-
-# log = tellopy.logger.Logger('TelloUI')
 
 prev_flight_data = None
-video_player = None
+flight_data = None
+new_image = None
 video_recorder = None
 font = None
-wid = None
 date_fmt = '%Y-%m-%d_%H%M%S'
+status_queue = queue.Queue()
 
 def toggle_recording(drone, speed):
     global video_recorder
@@ -152,18 +157,25 @@ def update_hud(hud, drone, flight_data):
         if surface is None:
             continue
         blits += [(surface, (0, h))]
-        # w = max(w, surface.get_width())
+        w = max(w, surface.get_width())
         h += surface.get_height()
     h += 64  # add some padding
     overlay = pygame.Surface((w, h), pygame.SRCALPHA)
-    overlay.fill((0,0,0)) # remove for mplayer overlay mode
+    overlay.fill((0,0,0))
     for blit in blits:
         overlay.blit(*blit)
     pygame.display.get_surface().blit(overlay, (0,0))
-    pygame.display.update(overlay.get_rect())
+    # pygame.display.update() is called once per frame in main()'s loop,
+    # after the video frame and the HUD are both blitted -- not here,
+    # since this may be called from a thread other than the main one
+    # (Cocoa/AppKit requires window updates to happen on the main thread).
 
 def status_print(text):
-    pygame.display.set_caption(text)
+    # status_print() is called from several threads (e.g. the video
+    # recorder's IOError handler, EVENT_FILE_RECEIVED); only the main
+    # thread may touch the window (pygame.display.set_caption()), so
+    # queue the text and let main()'s loop apply it.
+    status_queue.put(text)
 
 hud = [
     FlightDataDisplay('height', 'ALT %3d'),
@@ -175,27 +187,46 @@ hud = [
 ]
 
 def flightDataHandler(event, sender, data):
-    global prev_flight_data
-    text = str(data)
-    if prev_flight_data != text:
-        update_hud(hud, sender, data)
-        prev_flight_data = text
+    # Just record the latest sample; main()'s loop decides whether it
+    # changed and redraws the HUD from there (the only thread allowed to
+    # touch the pygame window).
+    global flight_data
+    flight_data = data
 
-def videoFrameHandler(event, sender, data):
-    global video_player
-    global video_recorder
-    if video_player is None:
-        cmd = [ 'mplayer', '-fps', '35', '-really-quiet' ]
-        if wid is not None:
-            cmd = cmd + [ '-wid', str(wid) ]
-        video_player = Popen(cmd + ['-'], stdin=PIPE)
-
+def recv_thread(drone):
+    # Decode the video stream and hand the latest frame to main()'s loop
+    # via new_image, the same way joystick_and_video.py/video_effect.py
+    # do -- this thread never touches pygame/the window itself.
+    global new_image
+    print('start recv_thread()')
     try:
-        video_player.stdin.write(data)
-    except IOError as err:
-        status_print(str(err))
-        video_player = None
+        container = av.open(drone.get_video_stream())
+        # skip first 300 frames
+        frame_skip = 300
+        while True:
+            for frame in container.decode(video=0):
+                if 0 < frame_skip:
+                    frame_skip = frame_skip - 1
+                    continue
+                start_time = time.time()
+                image = cv2.cvtColor(numpy.array(frame.to_image()), cv2.COLOR_RGB2BGR)
+                new_image = image
+                if frame.time_base < 1.0/60:
+                    time_base = 1.0/60
+                else:
+                    time_base = frame.time_base
+                frame_skip = int((time.time() - start_time)/time_base)
+    except Exception as ex:
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
+        print(ex)
 
+def videoRecorderHandler(event, sender, data):
+    # Only feeds the mencoder recording pipe now; display no longer goes
+    # through mplayer (see recv_thread()). EVENT_VIDEO_FRAME and the
+    # EVENT_VIDEO_DATA that get_video_stream() consumes are published
+    # independently per packet, so the two don't compete for data.
+    global video_recorder
     try:
         if video_recorder:
             video_recorder.stdin.write(data)
@@ -222,22 +253,28 @@ def main():
     global font
     font = pygame.font.SysFont("dejavusansmono", 32)
 
-    global wid
-    if 'window' in pygame.display.get_wm_info():
-        wid = pygame.display.get_wm_info()['window']
-    print("Tello video WID:", wid)
-
     drone = tellopy.Tello()
     drone.connect()
-    drone.start_video()
     drone.subscribe(drone.EVENT_FLIGHT_DATA, flightDataHandler)
-    drone.subscribe(drone.EVENT_VIDEO_FRAME, videoFrameHandler)
+    drone.subscribe(drone.EVENT_VIDEO_FRAME, videoRecorderHandler)
     drone.subscribe(drone.EVENT_FILE_RECEIVED, handleFileReceived)
+    threading.Thread(target=recv_thread, args=[drone]).start()
     speed = 30
+
+    current_image = None
+    prev_flight_data_text = None
 
     try:
         while 1:
             time.sleep(0.01)  # loop with pygame.event.get() is too mush tight w/o some sleep
+
+            # Apply any status text queued from other threads (see status_print()).
+            try:
+                while True:
+                    pygame.display.set_caption(status_queue.get_nowait())
+            except queue.Empty:
+                pass
+
             for e in pygame.event.get():
                 # WASD for movement
                 if e.type == pygame.locals.KEYDOWN:
@@ -262,7 +299,30 @@ def main():
                             getattr(drone, key_handler)(0)
                         else:
                             key_handler(drone, 0)
-    except e:
+
+            # Redraw (video frame + HUD, in that order so the HUD stays on
+            # top) only when something to show has actually changed, and
+            # only here, on the main thread.
+            redraw = current_image is not new_image
+            current_image = new_image
+            text = str(flight_data) if flight_data is not None else None
+            redraw = redraw or text != prev_flight_data_text
+            prev_flight_data_text = text
+
+            if redraw and current_image is not None:
+                frame_rgb = cv2.cvtColor(current_image, cv2.COLOR_BGR2RGB)
+                frame_surface = pygame.surfarray.make_surface(frame_rgb.swapaxes(0, 1))
+                # Centre the frame: in photo mode it is narrower (952x720)
+                # than the 1280x720 window, leaving room on both sides for
+                # the HUD, which is anchored at the left edge.
+                x = (1280 - frame_surface.get_width()) // 2
+                pygame.display.get_surface().blit(frame_surface, (x, 0))
+                if flight_data is not None:
+                    update_hud(hud, drone, flight_data)
+                pygame.display.update()
+    except Exception as e:
+        exc_type, exc_value, exc_traceback = sys.exc_info()
+        traceback.print_exception(exc_type, exc_value, exc_traceback)
         print(str(e))
     finally:
         print('Shutting down connection to drone...')
