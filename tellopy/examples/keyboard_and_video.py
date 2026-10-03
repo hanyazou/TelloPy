@@ -34,6 +34,7 @@ import queue
 import av
 import cv2
 import numpy
+from platform import system
 from subprocess import Popen, PIPE
 
 prev_flight_data = None
