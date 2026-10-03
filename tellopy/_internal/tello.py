@@ -421,46 +421,57 @@ class Tello(object):
         log.info('take picture')
         return self.send_packet_data(TAKE_PICTURE_COMMAND, type=0x68)
 
-    def go_up_absolute(self, val):
-        """Ascend by an absolute distance.
-        Pass in an int which represents the height in cm."""
-        log.info('go up absolute(val=%d)' % val)
-        packet = Packet(cmd='up %d' % val)
+    def up_absolute(self, cm):
+        """Ascend by an absolute distance, in cm (20-500).
+
+        Unlike up(), this is a single move to a relative height, not a
+        continuous stick command -- it sends the official Tello SDK's
+        plain-text command (e.g. b'up 50'), the same way emergency() does.
+        """
+        log.info('up_absolute(cm=%d)' % cm)
+        packet = Packet(cmd='up %d' % cm)
         self.send_packet(packet)
 
-    def go_down_absolute(self, val):
-        """Descend by an absolute distance.
-        Pass in an int which represents the height in cm."""
-        log.info('go down absolute(val=%d)' % val)
-        packet = Packet(cmd='down %d' % val)
+    def down_absolute(self, cm):
+        """Descend by an absolute distance, in cm (20-500). See up_absolute()."""
+        log.info('down_absolute(cm=%d)' % cm)
+        packet = Packet(cmd='down %d' % cm)
         self.send_packet(packet)
 
-    def go_right_absolute(self, val):
-        """Move right by an absolute distance.
-        Pass in an int which represents the distance in cm."""
-        log.info('go right absolute(val=%d)' % val)
-        packet = Packet(cmd='right %d' % val)
+    def forward_absolute(self, cm):
+        """Move forward by an absolute distance, in cm (20-500). See up_absolute()."""
+        log.info('forward_absolute(cm=%d)' % cm)
+        packet = Packet(cmd='forward %d' % cm)
         self.send_packet(packet)
 
-    def go_left_absolute(self, val):
-        """Move left by an absolute distance.
-        Pass in an int which represents the distance in cm."""
-        log.info('go left absolute(val=%d)' % val)
-        packet = Packet(cmd='left %d' % val)
+    def backward_absolute(self, cm):
+        """Move backward by an absolute distance, in cm (20-500). See up_absolute()."""
+        log.info('backward_absolute(cm=%d)' % cm)
+        packet = Packet(cmd='back %d' % cm)
         self.send_packet(packet)
 
-    def rotate_cw_absolute(self, val):
-        """Rotate clockwise by an absolute angle.
-        Pass in an int which represents degrees to rotate."""
-        log.info('rotate cw absolute(val=%d)' % val)
-        packet = Packet(cmd='cw %d' % val)
+    def right_absolute(self, cm):
+        """Move right by an absolute distance, in cm (20-500). See up_absolute()."""
+        log.info('right_absolute(cm=%d)' % cm)
+        packet = Packet(cmd='right %d' % cm)
         self.send_packet(packet)
 
-    def rotate_ccw_absolute(self, val):
-        """Rotate counter-clockwise by an absolute angle.
-        Pass in an int which represents degrees to rotate."""
-        log.info('rotate ccw absolute(val=%d)' % val)
-        packet = Packet(cmd='ccw %d' % val)
+    def left_absolute(self, cm):
+        """Move left by an absolute distance, in cm (20-500). See up_absolute()."""
+        log.info('left_absolute(cm=%d)' % cm)
+        packet = Packet(cmd='left %d' % cm)
+        self.send_packet(packet)
+
+    def clockwise_absolute(self, degrees):
+        """Rotate clockwise by an absolute angle, in degrees (1-3600). See up_absolute()."""
+        log.info('clockwise_absolute(degrees=%d)' % degrees)
+        packet = Packet(cmd='cw %d' % degrees)
+        self.send_packet(packet)
+
+    def counter_clockwise_absolute(self, degrees):
+        """Rotate counter-clockwise by an absolute angle, in degrees (1-3600). See up_absolute()."""
+        log.info('counter_clockwise_absolute(degrees=%d)' % degrees)
+        packet = Packet(cmd='ccw %d' % degrees)
         self.send_packet(packet)
 
     def up(self, val):
