@@ -269,6 +269,57 @@ class Tello(object):
         self.__send_command(LOW_BAT_THRESHOLD_CMD, 'set_low_bat_threshold', payload=bytearray([int(threshold)]), quiet=True)
         self.get_low_bat_threshold()
 
+    def get_ssid(self):
+        ''' Return the AP's current SSID.
+
+        Blocks the calling thread, retrying a few times if the drone
+        doesn't answer; raises error.TelloError if it never does. '''
+        sample = self.__send_recv_command(SSID_MSG, 'get_ssid', pkt_type=0x48)
+        return self.__decode_query_reply(sample.ack_payload)
+
+    def set_ssid(self, ssid):
+        ''' Set the AP's SSID.
+
+        Blocks the calling thread, retrying a few times if the drone
+        doesn't acknowledge; raises error.TelloError if it never does.
+        The change only takes effect once the drone is power-cycled --
+        get_ssid() (and the AP itself) keep reporting the old SSID until
+        then. '''
+        self.__send_recv_command(SSID_CMD, 'set_ssid', payload=bytearray(ssid.encode('ascii')))
+
+    def get_password(self):
+        ''' Return the AP's current password.
+
+        Same blocking/retry/failure behavior as get_ssid(). '''
+        sample = self.__send_recv_command(SSID_PASSWORD_MSG, 'get_password', pkt_type=0x48)
+        return self.__decode_query_reply(sample.ack_payload)
+
+    def set_password(self, password):
+        ''' Set the AP's password (WPA2-PSK).
+
+        Same blocking/retry/failure and power-cycle-to-take-effect
+        behavior as set_ssid(). Raises ValueError if password is longer
+        than 19 bytes as ASCII -- this library's own limit; whether the
+        drone itself accepts longer values is unconfirmed. '''
+        payload = bytearray(password.encode('ascii'))
+        if len(payload) > 19:
+            raise ValueError('password must be at most 19 bytes')
+        payload += bytearray(19 - len(payload))
+        self.__send_recv_command(SSID_PASSWORD_CMD, 'set_password', payload=payload)
+
+    def __decode_query_reply(self, ack_payload):
+        """Decode the status(1)+len(1)+ascii reply shape shared by
+        SSID_MSG and SSID_PASSWORD_MSG. The ascii text is sometimes
+        followed by extra zero-padding beyond the declared len (seen
+        after this library's own zero-padded set_password()); trimming
+        at the first NUL handles both that and the plain, unpadded shape
+        the drone uses for values it hasn't been touched by us."""
+        status = ack_payload[0]
+        if status != 0:
+            raise error.TelloError('query failed: status=%d' % status)
+        body = ack_payload[2:]
+        return body.split(b'\x00', 1)[0].decode('ascii')
+
     def start_calibration(self):
         """Start IMU calibration.
 
@@ -559,7 +610,7 @@ class Tello(object):
                 self.pkt_seq_num = 1
             return self.pkt_seq_num
 
-    def __send_command(self, cmd, name, payload=b'', pkt_type=0x68, quiet=False, track=True):
+    def __send_command(self, cmd, name, payload=b'', pkt_type=0x68, quiet=False, track=True, on_response=None):
         """Build, number, and send a simple one-shot command packet.
 
         payload is the raw bytes to place after the header (equivalent to
@@ -575,6 +626,27 @@ class Tello(object):
         commands that have their own separate response protocol and
         shouldn't participate in this generic matching (e.g. the
         calibration handshake, or us acking a received log header).
+
+        on_response, if given (only meaningful with track=True), is
+        called exactly once with the CommandSample once it settles --
+        either acked (sample.acked is True) or timed out (sample.acked
+        is False) -- in addition to and separately from the generic
+        EVENT_SAMPLE_COMMAND_ACK/_TIMEOUT events. It fires from whatever
+        thread notices the settling (typically the background recv
+        thread), after any internal lock this method or its callers hold
+        has been released, so it's safe to call back into
+        __send_command() (e.g. to retry) from within it.
+
+        (cmd, seq_num) is only a 16-bit key, so if the seq counter wraps
+        all the way around (65536 sends) while an old, still-unsettled
+        entry for the same cmd hasn't been evicted yet (only possible if
+        no packets at all arrived to drive eviction in the meantime),
+        this call's entry would otherwise silently overwrite it and
+        strand its on_response callback unfired. To keep "every
+        on_response fires exactly once" true even in that corner case,
+        a pre-existing entry found at the same key is settled as a
+        timeout (its own on_response, if any, is called) before being
+        replaced.
         """
         seq_num = self.__next_seq_num()
         pkt = Packet(cmd, pkt_type, payload)
@@ -583,12 +655,23 @@ class Tello(object):
             log.info('%s (cmd=0x%02x seq=0x%04x)' % (name, cmd, seq_num))
         if not track:
             return self.send_packet(pkt)
+
         with self.__pending_sends_lock:
-            if self.send_packet(pkt):
-                sample = CommandSample(cmd, seq_num, name, pkt.timestamp, pkt.get_data())
-                self.__pending_sends[(cmd, seq_num)] = sample
-                return True
-            return False
+            if not self.send_packet(pkt):
+                return False
+            sample = CommandSample(cmd, seq_num, name, pkt.timestamp, pkt.get_data())
+            stale = self.__pending_sends.get((cmd, seq_num))
+            self.__pending_sends[(cmd, seq_num)] = (sample, on_response)
+        # Lock released above; only publish/call back with it released.
+
+        if stale is not None:
+            stale_sample, stale_on_response = stale
+            log.debug('command slot (cmd=0x%02x seq=0x%04x) reused before it settled: %s' %
+                      (cmd, seq_num, str(stale_sample)))
+            self.__publish(event=self.EVENT_SAMPLE_COMMAND_TIMEOUT, data=stale_sample, recv_time=monotonic())
+            if stale_on_response is not None:
+                stale_on_response(stale_sample)
+        return True
 
     def __evict_stale_pending_sends(self, now):
         """Drop and report any pending sends older than the command_ack_timeout.
@@ -603,14 +686,17 @@ class Tello(object):
         evicted = []
         with self.__pending_sends_lock:
             while self.__pending_sends:
-                _, oldest = next(iter(self.__pending_sends.items()))
+                _, (oldest, _) = next(iter(self.__pending_sends.items()))
                 if now - oldest.send_time <= self.__command_ack_timeout:
                     break
-                self.__pending_sends.popitem(last=False)
-                evicted.append(oldest)
-        for sample in evicted:
+                _, entry = self.__pending_sends.popitem(last=False)
+                evicted.append(entry)
+        # Lock released above; only publish/call back with it released.
+        for sample, on_response in evicted:
             log.debug('command timed out: %s' % str(sample))
             self.__publish(event=self.EVENT_SAMPLE_COMMAND_TIMEOUT, data=sample, recv_time=now)
+            if on_response is not None:
+                on_response(sample)
 
     def __match_command_response(self, cmd, seq_num, recv_time, ack_payload):
         """Complete and publish the CommandSample for (cmd, seq_num), if any.
@@ -634,11 +720,55 @@ class Tello(object):
         if seq_num == 0:
             return
         with self.__pending_sends_lock:
-            sample = self.__pending_sends.pop((cmd, seq_num), None)
-        if sample is None:
+            entry = self.__pending_sends.pop((cmd, seq_num), None)
+        # Lock released above; only publish/call back with it released.
+        if entry is None:
             return
+        sample, on_response = entry
         sample._mark_acked(recv_time, ack_payload)
         self.__publish(event=self.EVENT_SAMPLE_COMMAND_ACK, data=sample, recv_time=recv_time)
+        if on_response is not None:
+            on_response(sample)
+
+    def __send_recv_command(self, cmd, name, payload=b'', pkt_type=0x68, retries=3):
+        """Send a one-shot command and block until it's acked, retrying
+        on timeout up to `retries` attempts total.
+
+        Built directly on __send_command()'s on_response callback (not a
+        reimplementation of its internals), so it shares __send_command's
+        exact wire behavior and its (cmd, seq_num)-keyed ack/timeout
+        matching.
+
+        For on-demand calls (e.g. a CLI tool) where getting an answer
+        synchronously is more useful than handling
+        EVENT_SAMPLE_COMMAND_ACK/_TIMEOUT asynchronously -- it blocks the
+        calling thread for up to roughly retries * command_ack_timeout
+        seconds. Returns the completed (acked) CommandSample on success;
+        raises error.TelloError if every attempt times out. Not meant for
+        anything sent at a steady rate (e.g. stick commands), nor for
+        commands where a retry-induced duplicate send could be unsafe
+        (e.g. flight actions like takeoff/land/flip) unless that's been
+        separately confirmed safe.
+        """
+        done = threading.Event()
+        result = {}
+
+        def attempt(n):
+            def on_response(sample):
+                if sample.acked:
+                    result['sample'] = sample
+                    done.set()
+                elif n < retries:
+                    attempt(n + 1)
+                else:
+                    done.set()
+            self.__send_command(cmd, name, payload=payload, pkt_type=pkt_type, on_response=on_response)
+
+        attempt(1)
+        done.wait(retries * (self.__command_ack_timeout + 1.0))
+        if 'sample' not in result:
+            raise error.TelloError('%s: no response after %d attempts' % (name, retries))
+        return result['sample']
 
     def __publish_log_records(self, recv_time):
         """Publish one EVENT_SAMPLE_* for each record the last log data
@@ -735,6 +865,10 @@ class Tello(object):
             log.info("recv: attitude limit: %s" % byte_to_hexstring(data[9:-2]))
         elif cmd == LOW_BAT_THRESHOLD_MSG:
             log.info("recv: low battery threshold: %s" % byte_to_hexstring(data[9:-2]))
+        elif cmd == SSID_MSG:
+            log.info("recv: ssid: %s" % byte_to_hexstring(data[9:-2]))
+        elif cmd == SSID_PASSWORD_MSG:
+            log.info("recv: password: %s" % byte_to_hexstring(data[9:-2]))
         elif cmd == LIGHT_MSG:
             log.debug("recv: light: %s" % byte_to_hexstring(data[9:-2]))
             self.__publish(event=self.EVENT_LIGHT, data=data[9:], recv_time=recv_time)
@@ -755,7 +889,7 @@ class Tello(object):
         elif cmd == CALIBRATION_START_CMD:
             log.debug("recv: calibration start ack: %s" % byte_to_hexstring(data[9:-2]))
         elif cmd in (SET_ALT_LIMIT_CMD, ATT_LIMIT_CMD, LOW_BAT_THRESHOLD_CMD, TAKEOFF_CMD, LAND_CMD, VIDEO_START_CMD, VIDEO_ENCODER_RATE_CMD, PALM_LAND_CMD,
-                     EXPOSURE_CMD, THROW_AND_GO_CMD, EMERGENCY_CMD):
+                     EXPOSURE_CMD, THROW_AND_GO_CMD, EMERGENCY_CMD, SSID_CMD, SSID_PASSWORD_CMD):
             log.debug("recv: ack: cmd=0x%02x seq=0x%04x %s" %
                      (uint16(data[5], data[6]), uint16(data[7], data[8]), byte_to_hexstring(data)))
         elif cmd == TELLO_CMD_FILE_SIZE:

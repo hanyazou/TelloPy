@@ -16,7 +16,8 @@ import time
 from tellopy._internal import crc
 from tellopy._internal.protocol import (
     START_OF_PACKET, STICK_CMD, LOG_HEADER_MSG, LOG_DATA_MSG, LOG_CONFIG_MSG,
-    WIFI_MSG, LIGHT_MSG, FLIGHT_MSG, TIME_CMD, CALIBRATION_STATUS_CMD)
+    WIFI_MSG, LIGHT_MSG, FLIGHT_MSG, TIME_CMD, CALIBRATION_STATUS_CMD,
+    SSID_MSG, SSID_PASSWORD_MSG)
 
 # What we got from the Tello. crc_ok says whether both CRCs in the header
 # and trailer were right; payload is what sits between them.
@@ -112,6 +113,15 @@ class FakeDrone(object):
 
     def send_calibration_status(self, step_mask=0, progress=0):
         self.send(CALIBRATION_STATUS_CMD, bytes([0, step_mask, 0, progress, 0]))
+
+    def send_ssid_reply(self, ssid, seq, status=0):
+        """A realistic SSID_MSG reply: status(1) + len(1) + ascii, as the
+        real drone sends it (ack_enabled's plain echo does not shape this)."""
+        self.send(SSID_MSG, bytes([status, len(ssid)]) + ssid.encode('ascii'), seq)
+
+    def send_password_reply(self, password, seq, status=0):
+        """A realistic SSID_PASSWORD_MSG reply; same shape as send_ssid_reply()."""
+        self.send(SSID_PASSWORD_MSG, bytes([status, len(password)]) + password.encode('ascii'), seq)
 
     def send_video(self, h0, h1, body=b''):
         self.video_sock.sendto(bytes([h0, h1]) + body, self.video_address)

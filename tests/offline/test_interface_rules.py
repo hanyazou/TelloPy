@@ -16,7 +16,7 @@ CONTRACT_TESTS = sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(_
 
 # Classes the library had before the timing work; the rules on names do not ask for their names to be tested.
 EXISTING_CLASSES = {'Tello', 'Logger', 'VideoStream', 'FlightData', 'LogData', 'LogImuAtti', 'LogNewMvoFeedback'}
-EXISTING_NAMES = {'update'}
+EXISTING_NAMES = {'update', 'add_note', 'with_traceback'}   # the latter two are BaseException's, not the package's
 # What a subclass declares; a test of the subclass does not have to mention it.
 DECLARATIONS = {'EVENTS', 'SAMPLE', 'ID'}
 
