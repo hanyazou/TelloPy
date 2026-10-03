@@ -56,6 +56,7 @@ class FakeDrone(object):
         self.video_address = ('127.0.0.1', video_port)
         self.client = None                  # where the Tello is, learned from its first packet
         self.received = []
+        self.received_text = []             # plain-text SDK-style commands, e.g. b'emergency'
         self.ack_enabled = True             # echo each command back, as the real drone does
         self.lock = threading.Lock()
         self.stopped = threading.Event()
@@ -150,6 +151,11 @@ class FakeDrone(object):
             self.sock.sendto(b'conn_ack:' + bytes([0x96, 0x17]), source)
             return
         if data[0] != START_OF_PACKET:
+            # The official Tello SDK's plain-text commands (e.g.
+            # b'emergency') have no header of their own to recognize by;
+            # record whatever wasn't conn_req: and isn't a binary packet.
+            with self.lock:
+                self.received_text.append(bytes(data))
             return
         buf = bytearray(data)
         self.client = source

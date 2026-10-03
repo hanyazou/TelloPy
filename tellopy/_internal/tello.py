@@ -230,10 +230,18 @@ class Tello(object):
         return self.__send_command(PALM_LAND_CMD, 'palmland', payload=bytearray([0x00]))
     
     def emergency(self):
-        """Stop all four motors instantly"""
+        """Stop all four motors instantly.
+
+        This is not a landing: if the drone is airborne, it drops right
+        where it is, with no controlled descent -- confirmed on hardware
+        (over a cushioned surface), where altitude and speed both showed
+        a real free-fall, not anything gradual. Only use this when an
+        uncontrolled drop is preferable to continuing to fly (e.g. about
+        to hit someone or something); for a normal landing use land() or
+        palm_land() instead.
+        """
         log.info('emergency')
         pkt = Packet(EMERGENCY_CMD)
-        pkt.add_byte(0x00)
         pkt.fixup()
         return self.send_packet(pkt)
 

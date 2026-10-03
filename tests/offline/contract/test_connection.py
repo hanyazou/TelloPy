@@ -64,6 +64,23 @@ class CommandTest(DroneTestCase):
         self.assertEqual([a.name for a in acks if a.name == 'land'], [])
 
 
+class EmergencyTest(DroneTestCase):
+
+    def test_emergency_sends_the_plain_text_sdk_command(self):
+        # emergency() is not part of the usual binary protocol -- it sends
+        # the official Tello SDK's plain-text command, with no header, no
+        # seq_num and no CRC, so it is checked for directly rather than via
+        # wire.* / self.fake.received_cmds() (both binary-packet concepts).
+        drone = self.connect()
+        drone.emergency()
+
+        def received():
+            with self.fake.lock:
+                return list(self.fake.received_text)
+        wait_until(received, what='the emergency command')
+        self.assertEqual(received(), [b'emergency'])
+
+
 class VideoTest(DroneTestCase):
 
     def test_video_stream_delivers_the_bytes_sent(self):
