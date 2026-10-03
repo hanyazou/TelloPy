@@ -2,7 +2,7 @@ import sys
 import traceback
 import tellopy
 import av
-import cv2.cv2 as cv2  # for avoidance of pylint error
+import cv2
 import numpy
 import time
 

@@ -17,7 +17,7 @@ def uint16(val0, val1):
 
 
 def int16(val0, val1):
-    if (val1 & 0xff) is not 0:
+    if (val1 & 0xff) != 0:
         return ((val0 & 0xff) | ((val1 & 0xff) << 8)) - 0x10000
     else:
         return (val0 & 0xff) | ((val1 & 0xff) << 8)
